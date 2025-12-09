@@ -1,38 +1,90 @@
+// Variable globale pour stocker la table cible une fois le contexte chargé
+let targetTableId = null;
 let pendingChanges = {};
 
-// 1. Initialiser l'API Grist
-grist.ready({
-    requiredAccess: 'full'
-});
+// ----------------------------------------------------
+// 1. Initialiser et récupérer le contexte de la table cible
+// ----------------------------------------------------
+grist.ready({ requiredAccess: 'full' });
 
-// 2. S'abonner aux données de l'enregistrement sélectionné
-grist.onRecords((records, mappings) => {
-    const record = records[0];
-    // ------------------------------------------------------------------
-    // VÉRIFICATION 1 : Vérifier la présence de l'enregistrement sélectionné
-    if (!record) {
-        document.getElementById('form-container').textContent = "Veuillez sélectionner une ligne.";
-        // On pourrait vouloir afficher le bouton 'Envoyer' comme désactivé ici aussi.
-        return;
-    }
-    // ------------------------------------------------------------------
-
-    // ------------------------------------------------------------------
-    // VÉRIFICATION 2 : Vérifier que les mappages sont disponibles
-    if (!mappings || Object.keys(mappings).length === 0) {
-        // Cela signifie que vous n'avez pas sélectionné de colonnes dans les options du widget.
+// Écoutez le contexte pour obtenir l'ID de la table
+grist.onContext(context => {
+    // Si le widget est lié à une table, son ID est dans le contexte.
+    if (context.tableId) {
+        targetTableId = context.tableId;
+        // Une fois l'ID de la table récupéré, on peut charger les colonnes
+        loadColumns(targetTableId);
+    } else {
         document.getElementById('form-container').textContent =
-            "Veuillez configurer les colonnes dans les paramètres du widget.";
-        return;
+            "Erreur : Le widget doit être lié à une table de données.";
     }
-    // ------------------------------------------------------------------
-    const colIds = Object.keys(mappings);
-    renderForm(record, colIds, mappings);
-
-    // Réinitialiser les changements et le bouton lorsque le record change
-    pendingChanges = {};
-    updateSubmitButton();
 });
+
+// ----------------------------------------------------
+// 2. Charger les colonnes et rendre le formulaire
+// ----------------------------------------------------
+async function loadColumns(tableId) {
+    try {
+        // Récupère toutes les définitions de colonnes de la table
+        const columns = await grist.getColumns(tableId);
+        renderCreationForm(columns);
+    } catch (error) {
+        document.getElementById('form-container').textContent = "Erreur lors du chargement des colonnes: " + error.message;
+    }
+}
+
+// ----------------------------------------------------
+// 3. Rendu du formulaire de création
+// ----------------------------------------------------
+function renderCreationForm(columns) {
+    const formContainer = document.getElementById('form-container');
+    formContainer.innerHTML = '';
+
+    columns.forEach(col => {
+        // Exclure les colonnes système
+        if (['id', 'manualSort', 'parent_id'].includes(col.id)) return;
+
+        // Note: 'label' est l'intitulé que vous voyez dans Grist.
+        const label = col.label;
+        const colId = col.id;
+
+        const div = document.createElement('div');
+        // ... (création des labels et inputs comme dans la réponse précédente) ...
+
+        // ...
+
+        // Écouteur d'événement pour stocker le changement en attente
+        inputEl.addEventListener('input', handleInput);
+
+        div.appendChild(labelEl);
+        div.appendChild(inputEl);
+        formContainer.appendChild(div);
+    });
+    // S'assurer que le bouton est prêt
+    updateSubmitButton();
+}
+
+// ----------------------------------------------------
+// 4. Fonction d'envoi pour la CRÉATION d'enregistrement
+// ----------------------------------------------------
+function handleSubmit() {
+    if (targetTableId && Object.keys(pendingChanges).length > 0) {
+        // Utilisation de grist.addRecord pour la création
+        grist.addRecord(targetTableId, pendingChanges)
+            .then(() => {
+                alert("Enregistrement créé avec succès !");
+                // Optionnel : Effacer le formulaire après l'envoi
+                document.getElementById('form-container').querySelectorAll('input').forEach(input => input.value = '');
+                pendingChanges = {};
+                updateSubmitButton();
+            })
+            .catch(error => {
+                console.error("Erreur lors de la création de l'enregistrement:", error);
+                alert("Erreur lors de la création.");
+            });
+    }
+}
+// ... (Les fonctions handleInput et updateSubmitButton sont conservées) ...
 
 // 3. Gérer les changements dans les champs de saisie
 function handleInput(event) {
@@ -45,23 +97,6 @@ function handleInput(event) {
 
     // Activer le bouton d'envoi
     updateSubmitButton();
-}
-
-// 4. Gérer l'action d'envoi (clic sur le bouton)
-function handleSubmit() {
-    if (Object.keys(pendingChanges).length > 0) {
-        // Envoyer toutes les modifications stockées à Grist
-        grist.setRecord(pendingChanges)
-            .then(() => {
-                // Réinitialiser après l'envoi réussi
-                pendingChanges = {};
-                updateSubmitButton();
-            })
-            .catch(error => {
-                console.error("Erreur lors de l'enregistrement:", error);
-                alert("Erreur lors de l'enregistrement. Consultez la console.");
-            });
-    }
 }
 
 // 5. Mettre à jour l'état du bouton d'envoi
