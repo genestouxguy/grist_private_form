@@ -5,101 +5,92 @@ console.log('DISP - Démarrage du script');
 
 // Initialisation du widget
 grist.ready({
-    requiredAccess: 'full',
-    columns: [
-        { name: 'columns', optional: true }
-    ]
+    requiredAccess: 'full'
 });
 
 console.log('DISP - Widget initialisé avec grist.ready()');
 
-// Écoute des changements dans Grist
-grist.onRecord(async (record, mappings) => {
-    console.log('DISP - onRecord appelé');
-    console.log('DISP - Record reçu:', record);
-    console.log('DISP - Mappings reçus:', mappings);
+// Fonction pour charger directement la table
+async function initializeWidget() {
+    console.log('DISP - Début de initializeWidget');
 
-    if (mappings) {
-        await loadTableMetadata(mappings);
-    } else {
-        console.log('DISP - Pas de mappings, tentative de chargement sans mappings');
-        await loadTableMetadata(null);
-    }
-});
-
-// Charge les métadonnées de la table
-async function loadTableMetadata(mappings) {
-    console.log('DISP - Début de loadTableMetadata');
     try {
-        // Récupère le tableId depuis les mappings
-        if (mappings && mappings.tableId) {
-            tableId = mappings.tableId;
-            console.log('DISP - TableId trouvé dans mappings:', tableId);
-        } else {
-            console.log('DISP - Pas de tableId dans mappings, tentative avec getTable()');
-            // Fallback: essaie de récupérer via getTable
+        // Méthode 1: Essayer de récupérer la table sélectionnée
+        console.log('DISP - Tentative fetchSelectedTable()');
+        const tableData = await grist.fetchSelectedTable();
+        console.log('DISP - fetchSelectedTable() réussi:', tableData);
+
+        if (tableData) {
+            // Le nom de la table est la première clé
+            const tables = Object.keys(tableData);
+            console.log('DISP - Tables trouvées:', tables);
+
+            if (tables.length > 0) {
+                tableId = tables[0];
+                console.log('DISP - TableId défini:', tableId);
+
+                const data = tableData[tableId];
+                const allColumnNames = Object.keys(data).filter(col =>
+                    col !== 'id' &&
+                    !col.startsWith('gristHelper_') &&
+                    !col.startsWith('manualSort')
+                );
+                console.log('DISP - Colonnes trouvées:', allColumnNames);
+
+                await loadColumnsMetadata(allColumnNames);
+            }
+        }
+    } catch (error) {
+        console.log('DISP - Erreur avec fetchSelectedTable:', error);
+
+        // Méthode 2: Essayer via getTable()
+        try {
+            console.log('DISP - Tentative getTable()');
             const table = await grist.getTable();
-            console.log('DISP - Résultat getTable():', table);
+            console.log('DISP - getTable() résultat:', table);
+
             if (table && table.tableId) {
                 tableId = table.tableId;
                 console.log('DISP - TableId trouvé via getTable():', tableId);
+                await loadTableDataAndColumns();
             }
+        } catch (error2) {
+            console.log('DISP - Erreur avec getTable:', error2);
+            showMessage('Impossible de se connecter à la table. Assurez-vous que le widget a accès à la table.', 'error');
         }
+    }
+}
 
-        if (!tableId) {
-            console.log('DISP - ERREUR: Aucun tableId trouvé');
-            showMessage('Aucune table sélectionnée', 'error');
-            return;
+// Charge les données de la table quand on a le tableId
+async function loadTableDataAndColumns() {
+    console.log('DISP - loadTableDataAndColumns pour table:', tableId);
+
+    try {
+        const tableData = await grist.docApi.fetchTable(tableId);
+        console.log('DISP - Données de la table:', tableData);
+
+        if (tableData && tableData[tableId]) {
+            const data = tableData[tableId];
+            const allColumnNames = Object.keys(data).filter(col =>
+                col !== 'id' &&
+                !col.startsWith('gristHelper_') &&
+                !col.startsWith('manualSort')
+            );
+            console.log('DISP - Colonnes trouvées:', allColumnNames);
+
+            await loadColumnsMetadata(allColumnNames);
         }
+    } catch (error) {
+        console.log('DISP - Erreur dans loadTableDataAndColumns:', error);
+        showMessage('Erreur lors du chargement des colonnes: ' + error.message, 'error');
+    }
+}
 
-        console.log('DISP - TableId défini:', tableId);
+// Charge les métadonnées des colonnes
+async function loadColumnsMetadata(columnNames) {
+    console.log('DISP - loadColumnsMetadata pour colonnes:', columnNames);
 
-        // Récupère les colonnes mappées depuis le widget
-        let mappedColumns = [];
-        if (mappings) {
-            for (let key in mappings) {
-                if (key !== 'tableId' && mappings[key]) {
-                    mappedColumns.push(mappings[key]);
-                    console.log('DISP - Colonne mappée trouvée:', key, '=', mappings[key]);
-                }
-            }
-        }
-        console.log('DISP - Total colonnes mappées:', mappedColumns.length);
-
-        // Récupère la structure de la table via fetchTable
-        console.log('DISP - Tentative de récupération des données de la table');
-        let tableData;
-        try {
-            tableData = await grist.fetchSelectedTable();
-            console.log('DISP - fetchSelectedTable() réussi');
-        } catch (e) {
-            console.log('DISP - fetchSelectedTable() échoué, essai avec fetchTable');
-            tableData = await grist.docApi.fetchTable(tableId);
-            console.log('DISP - fetchTable() réussi');
-        }
-
-        console.log('DISP - Données de table reçues:', tableData);
-
-        if (!tableData || !tableData[tableId]) {
-            console.log('DISP - ERREUR: Structure de données invalide');
-            showMessage('Impossible de charger les données de la table', 'error');
-            return;
-        }
-
-        // Extrait les noms de colonnes depuis les données
-        const data = tableData[tableId];
-        console.log('DISP - Données extraites:', data);
-        const allColumnNames = Object.keys(data).filter(col =>
-            col !== 'id' &&
-            !col.startsWith('gristHelper_') &&
-            !col.startsWith('manualSort')
-        );
-        console.log('DISP - Noms de colonnes trouvés:', allColumnNames);
-
-        // Si on a des colonnes mappées, on les utilise, sinon on prend toutes les colonnes
-        const columnsToUse = mappedColumns.length > 0 ? mappedColumns : allColumnNames;
-        console.log('DISP - Colonnes à utiliser:', columnsToUse);
-
+    try {
         // Récupère les métadonnées des colonnes depuis _grist_Tables_column
         console.log('DISP - Récupération des métadonnées des colonnes');
         const columnsMetadata = await grist.docApi.fetchTable('_grist_Tables_column');
@@ -107,30 +98,27 @@ async function loadTableMetadata(mappings) {
         console.log('DISP - Métadonnées des colonnes:', colData);
 
         // Construit la liste des colonnes avec leurs types
-        columnsList = columnsToUse
-            .filter(colName => colName && colName !== 'id')
-            .map(colName => {
-                // Trouve l'index de cette colonne dans les métadonnées
-                const colIndex = colData.colId.indexOf(colName);
-                console.log('DISP - Traitement colonne:', colName, 'index:', colIndex);
+        columnsList = columnNames.map(colName => {
+            const colIndex = colData.colId.indexOf(colName);
+            console.log('DISP - Traitement colonne:', colName, 'index:', colIndex);
 
-                let colType = 'Text';
-                let colLabel = colName;
+            let colType = 'Text';
+            let colLabel = colName;
 
-                if (colIndex !== -1) {
-                    colType = colData.type[colIndex] || 'Text';
-                    colLabel = colData.label[colIndex] || colName;
-                    console.log('DISP - Métadonnées trouvées - Type:', colType, 'Label:', colLabel);
-                } else {
-                    console.log('DISP - Pas de métadonnées, utilisation des valeurs par défaut');
-                }
+            if (colIndex !== -1) {
+                colType = colData.type[colIndex] || 'Text';
+                colLabel = colData.label[colIndex] || colName;
+                console.log('DISP - Métadonnées trouvées - Type:', colType, 'Label:', colLabel);
+            } else {
+                console.log('DISP - Pas de métadonnées, utilisation des valeurs par défaut');
+            }
 
-                return {
-                    id: colName,
-                    label: colLabel,
-                    type: colType
-                };
-            });
+            return {
+                id: colName,
+                label: colLabel,
+                type: colType
+            };
+        });
 
         console.log('DISP - Liste finale des colonnes:', columnsList);
 
@@ -145,10 +133,28 @@ async function loadTableMetadata(mappings) {
         hideMessage();
         console.log('DISP - Formulaire rendu avec succès');
     } catch (error) {
-        console.error('DISP - ERREUR CRITIQUE dans loadTableMetadata:', error);
-        showMessage('Erreur lors du chargement: ' + error.message, 'error');
+        console.error('DISP - ERREUR dans loadColumnsMetadata:', error);
+        showMessage('Erreur lors du chargement des métadonnées: ' + error.message, 'error');
     }
 }
+
+// Écoute des changements dans Grist
+grist.onRecord(async (record, mappings) => {
+    console.log('DISP - onRecord appelé');
+    console.log('DISP - Record reçu:', record);
+    console.log('DISP - Mappings reçus:', mappings);
+
+    // Si on reçoit des données, on recharge
+    if (!tableId) {
+        await initializeWidget();
+    }
+});
+
+// Lance l'initialisation au démarrage
+grist.ready().then(() => {
+    console.log('DISP - grist.ready() complété, lancement de initializeWidget');
+    initializeWidget();
+});
 
 // Génère le formulaire
 function renderForm(columns) {
