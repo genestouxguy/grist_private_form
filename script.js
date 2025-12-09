@@ -15,28 +15,31 @@ async function initializeWidget() {
     console.log('DISP - Début de initializeWidget');
 
     try {
-        // Récupère les informations de la section (vue) du widget
-        console.log('DISP - Récupération des informations de la section');
-        const section = await grist.sectionApi.getSection();
-        console.log('DISP - Section récupérée:', section);
+        // Méthode 1: Via getTable()
+        console.log('DISP - Tentative getTable()');
+        const table = await grist.getTable();
+        console.log('DISP - Résultat getTable():', table);
 
-        if (section && section.tableId) {
-            tableId = section.tableId;
-            console.log('DISP - TableId trouvé dans section:', tableId);
-        } else {
-            console.log('DISP - Pas de tableId dans section, essai avec getTable()');
-            const table = await grist.getTable();
-            console.log('DISP - Résultat getTable():', table);
+        if (table && table.tableId) {
+            tableId = table.tableId;
+            console.log('DISP - TableId trouvé via getTable():', tableId);
+        }
 
-            if (table && table.tableId) {
-                tableId = table.tableId;
-                console.log('DISP - TableId trouvé via getTable():', tableId);
+        // Méthode 2: Via sectionApi si getTable() échoue
+        if (!tableId) {
+            console.log('DISP - getTable() sans tableId, essai avec sectionApi');
+            const section = await grist.sectionApi.getSection();
+            console.log('DISP - Section récupérée:', section);
+
+            if (section && section.tableId) {
+                tableId = section.tableId;
+                console.log('DISP - TableId trouvé dans section:', tableId);
             }
         }
 
         if (!tableId) {
             console.log('DISP - ERREUR: Aucun tableId trouvé');
-            showMessage('Impossible de déterminer la table associée au widget', 'error');
+            showMessage('Impossible de déterminer la table associée au widget. Vérifiez la configuration dans "SÉLECTIONNER PAR".', 'error');
             return;
         }
 
@@ -59,35 +62,101 @@ async function loadTableColumns() {
     }
 
     try {
-        // Récupère les colonnes visibles de la section
-        console.log('DISP - Récupération des colonnes visibles');
-        const section = await grist.sectionApi.getSection();
-        console.log('DISP - Section pour colonnes:', section);
+        // Récupère les informations de la vue/section pour les colonnes visibles
+        console.log('DISP - Récupération de la configuration de la vue');
+        const viewSection = await grist.viewApi.fetchSelectedTable();
+        console.log('DISP - ViewSection:', viewSection);
 
         let visibleColumns = [];
 
-        if (section && section.fields) {
-            console.log('DISP - Fields trouvés dans section:', section.fields);
-            visibleColumns = section.fields
-                .filter(field => !field.hidden)
-                .map(field => field.colId);
-            console.log('DISP - Colonnes visibles extraites:', visibleColumns);
+        // Essaie de récupérer via les options du widget
+        try {
+            const options = await grist.widgetApi.getOptions();
+            console.log('DISP - Options du widget:', options);
+        } catch (e) {
+            console.log('DISP - Pas d\'options widget:', e);
         }
 
-        // Si pas de colonnes visibles, récupère toutes les colonnes de la table
+        // Récupère la liste des champs visibles depuis _grist_Views_section_field
+        try {
+            console.log('DISP - Récupération des champs de la vue');
+            const viewFields = await grist.docApi.fetchTable('_grist_Views_section_field');
+            console.log('DISP - Champs de vue bruts:', viewFields);
+
+            // Il faut aussi récupérer l'ID de la section actuelle
+            const tables = await grist.docApi.fetchTable('_grist_Tables');
+            console.log('DISP - Tables:', tables);
+
+            const tablesData = tables._grist_Tables;
+            const tableIndex = tablesData.tableId.indexOf(tableId);
+            console.log('DISP - Index de la table:', tableIndex);
+
+            if (tableIndex !== -1) {
+                const tableRecordId = tablesData.id[tableIndex];
+                console.log('DISP - Table record ID:', tableRecordId);
+
+                // Récupère les colonnes de cette table
+                const columnsData = await grist.docApi.fetchTable('_grist_Tables_column');
+                const allColumns = columnsData._grist_Tables_column;
+                console.log('DISP - Toutes les colonnes:', allColumns);
+
+                // Filtre les colonnes de cette table
+                for (let i = 0; i < allColumns.id.length; i++) {
+                    if (allColumns.parentId[i] === tableRecordId) {
+                        const colId = allColumns.colId[i];
+                        if (colId !== 'id' && !colId.startsWith('gristHelper_') && !colId.startsWith('manualSort')) {
+                            visibleColumns.push({
+                                id: colId,
+                                label: allColumns.label[i] || colId,
+                                type: allColumns.type[i] || 'Text'
+                            });
+                            console.log('DISP - Colonne ajoutée:', colId, allColumns.label[i], allColumns.type[i]);
+                        }
+                    }
+                }
+            }
+        } catch (e) {
+            console.log('DISP - Erreur lors de la récupération des champs de vue:', e);
+        }
+
+        // Si pas de colonnes trouvées via les métadonnées, récupère toutes les colonnes
         if (visibleColumns.length === 0) {
-            console.log('DISP - Pas de colonnes visibles, récupération de toutes les colonnes');
+            console.log('DISP - Pas de colonnes via métadonnées, récupération directe');
             const tableData = await grist.docApi.fetchTable(tableId);
             console.log('DISP - Données de table:', tableData);
 
             if (tableData && tableData[tableId]) {
                 const data = tableData[tableId];
-                visibleColumns = Object.keys(data).filter(col =>
+                const columnNames = Object.keys(data).filter(col =>
                     col !== 'id' &&
                     !col.startsWith('gristHelper_') &&
                     !col.startsWith('manualSort')
                 );
-                console.log('DISP - Toutes les colonnes:', visibleColumns);
+                console.log('DISP - Noms de colonnes:', columnNames);
+
+                // Charge les métadonnées pour ces colonnes
+                const columnsMetadata = await grist.docApi.fetchTable('_grist_Tables_column');
+                const colData = columnsMetadata._grist_Tables_column;
+
+                visibleColumns = columnNames.map(colName => {
+                    const colIndex = colData.colId.indexOf(colName);
+
+                    let colType = 'Text';
+                    let colLabel = colName;
+
+                    if (colIndex !== -1) {
+                        colType = colData.type[colIndex] || 'Text';
+                        colLabel = colData.label[colIndex] || colName;
+                    }
+
+                    return {
+                        id: colName,
+                        label: colLabel,
+                        type: colType
+                    };
+                });
+
+                console.log('DISP - Colonnes construites:', visibleColumns);
             }
         }
 
@@ -97,55 +166,8 @@ async function loadTableColumns() {
             return;
         }
 
-        await loadColumnsMetadata(visibleColumns);
-
-    } catch (error) {
-        console.error('DISP - Erreur dans loadTableColumns:', error);
-        showMessage('Erreur lors du chargement des colonnes: ' + error.message, 'error');
-    }
-}
-
-// Charge les métadonnées des colonnes
-async function loadColumnsMetadata(columnNames) {
-    console.log('DISP - loadColumnsMetadata pour colonnes:', columnNames);
-
-    try {
-        // Récupère les métadonnées des colonnes
-        console.log('DISP - Récupération des métadonnées');
-        const columnsMetadata = await grist.docApi.fetchTable('_grist_Tables_column');
-        const colData = columnsMetadata._grist_Tables_column;
-        console.log('DISP - Métadonnées reçues, nombre total de colonnes:', colData.id.length);
-
-        // Construit la liste des colonnes avec leurs types
-        columnsList = columnNames.map(colName => {
-            const colIndex = colData.colId.indexOf(colName);
-            console.log('DISP - Traitement colonne:', colName, 'index:', colIndex);
-
-            let colType = 'Text';
-            let colLabel = colName;
-
-            if (colIndex !== -1) {
-                colType = colData.type[colIndex] || 'Text';
-                colLabel = colData.label[colIndex] || colName;
-                console.log('DISP - Type:', colType, 'Label:', colLabel);
-            } else {
-                console.log('DISP - Pas de métadonnées trouvées, valeurs par défaut');
-            }
-
-            return {
-                id: colName,
-                label: colLabel,
-                type: colType
-            };
-        });
-
+        columnsList = visibleColumns;
         console.log('DISP - Liste finale des colonnes:', columnsList);
-
-        if (columnsList.length === 0) {
-            console.log('DISP - ERREUR: Liste de colonnes vide');
-            showMessage('Aucune colonne disponible', 'error');
-            return;
-        }
 
         console.log('DISP - Appel de renderForm avec', columnsList.length, 'colonnes');
         renderForm(columnsList);
@@ -154,8 +176,8 @@ async function loadColumnsMetadata(columnNames) {
         console.log('DISP - Formulaire rendu avec succès');
 
     } catch (error) {
-        console.error('DISP - ERREUR dans loadColumnsMetadata:', error);
-        showMessage('Erreur lors du chargement des métadonnées: ' + error.message, 'error');
+        console.error('DISP - Erreur dans loadTableColumns:', error);
+        showMessage('Erreur lors du chargement des colonnes: ' + error.message, 'error');
     }
 }
 
@@ -302,22 +324,10 @@ function hideMessage() {
     messageDiv.className = 'message';
 }
 
-// Écoute des changements
-grist.onRecord(async (record, mappings) => {
-    console.log('DISP - onRecord appelé');
-    console.log('DISP - Record:', record);
-    console.log('DISP - Mappings:', mappings);
-
-    // Recharge si le widget change de table
-    if (!tableId) {
-        await initializeWidget();
-    }
-});
-
 // Lance l'initialisation au démarrage
-console.log('DISP - Lancement de grist.ready().then()');
+console.log('DISP - Lancement de initializeWidget après ready');
 grist.ready().then(() => {
-    console.log('DISP - grist.ready() complété, lancement de initializeWidget');
+    console.log('DISP - grist.ready() complété');
     initializeWidget();
 });
 
