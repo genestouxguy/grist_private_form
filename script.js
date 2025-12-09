@@ -12,6 +12,24 @@ document.addEventListener("DOMContentLoaded", function () {
         // 2. S'abonner aux données de l'enregistrement sélectionné
         grist.onRecords((records, mappings) => {
             const record = records[0];
+            // ------------------------------------------------------------------
+            // VÉRIFICATION 1 : Vérifier la présence de l'enregistrement sélectionné
+            if (!record) {
+                document.getElementById('form-container').textContent = "Veuillez sélectionner une ligne.";
+                // On pourrait vouloir afficher le bouton 'Envoyer' comme désactivé ici aussi.
+                return;
+            }
+            // ------------------------------------------------------------------
+
+            // ------------------------------------------------------------------
+            // VÉRIFICATION 2 : Vérifier que les mappages sont disponibles
+            if (!mappings || Object.keys(mappings).length === 0) {
+                // Cela signifie que vous n'avez pas sélectionné de colonnes dans les options du widget.
+                document.getElementById('form-container').textContent =
+                    "Veuillez configurer les colonnes dans les paramètres du widget.";
+                return;
+            }
+            // ------------------------------------------------------------------
             const colIds = Object.keys(mappings);
             renderForm(record, colIds, mappings);
 
