@@ -41,7 +41,7 @@ async function loadFromMappings(mappings) {
         } else {
             console.log('DISP - Pas de tableId dans mappings');
             // Essaie via selectedTable
-            const table = await grist.selectedTable();
+            const table = grist.selectedTable;
             console.log('DISP - selectedTable() résultat:', table);
             if (table) {
                 tableId = table;
