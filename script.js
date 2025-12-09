@@ -1,7 +1,7 @@
 let tableId = null;
 let columnsList = [];
 
-console.log('DISP - Démarrage du script 18');
+console.log('DISP - Démarrage du script 19');
 
 // Initialisation du widget avec demande de configuration
 grist.ready({
