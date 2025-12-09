@@ -1,0 +1,19 @@
+#mon-formulaire {
+    padding: 10px;
+    background: #f5f5f5;
+    border-radius: 5px;
+    font-family: Arial, sans-serif;
+}
+
+#mon-formulaire input,
+#mon-formulaire button {
+    margin: 5px;
+    padding: 8px;
+}
+
+#mon-formulaire button {
+    background-color: #4CAF50;
+    color: white;
+    border: none;
+    cursor: pointer;
+}
