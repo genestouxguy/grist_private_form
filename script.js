@@ -1,19 +1,17 @@
-let gristAPI;
 let visibleColumns = [];
 let tableId = null;
 
 // Initialisation du widget
 grist.ready({
-    requiredAccess: 'full',
-    columns: []
+    requiredAccess: 'full'
 });
 
 // Écoute des changements dans Grist
-grist.onRecords(async (records, mappings) => {
+grist.onRecord(async (record, mappings) => {
     await loadTableMetadata();
 });
 
-grist.onOptions(async (options, interaction) => {
+grist.onOptions(async (options) => {
     await loadTableMetadata();
 });
 
@@ -21,54 +19,47 @@ grist.onOptions(async (options, interaction) => {
 async function loadTableMetadata() {
     try {
         const table = await grist.getTable();
-        tableId = table?.tableId || await grist.selectedTable?.getTableId();
+        tableId = table?.tableId;
 
         if (!tableId) {
             showMessage('Aucune table sélectionnée', 'error');
             return;
         }
 
-        // Récupère les colonnes visibles
-        visibleColumns = await grist.viewApi.fetch(['fields']);
+        // Récupère les options du widget pour les colonnes visibles
+        const options = await grist.widgetApi.getOption('columns');
 
-        if (!visibleColumns || !visibleColumns.fields) {
-            showMessage('Impossible de charger les colonnes', 'error');
-            return;
-        }
+        // Récupère toutes les colonnes de la table
+        const tables = await grist.docApi.fetchTable('_grist_Tables_column');
+        const allColumns = tables._grist_Tables_column;
 
-        // Récupère les informations détaillées des colonnes
-        const columnsInfo = await Promise.all(
-            visibleColumns.fields.map(async (field) => {
-                try {
-                    const colId = field.colRef;
-                    const tables = await grist.docApi.fetchTable('_grist_Tables_column');
-                    const colData = tables._grist_Tables_column;
+        // Trouve l'ID de la table actuelle
+        const tablesData = await grist.docApi.fetchTable('_grist_Tables');
+        const tableIndex = tablesData._grist_Tables.tableId.indexOf(tableId);
+        const tableRecordId = tablesData._grist_Tables.id[tableIndex];
 
-                    const colIndex = colData.id.findIndex(id => id === colId);
-
-                    if (colIndex === -1) return null;
-
-                    return {
-                        id: colData.colId[colIndex],
-                        label: colData.label[colIndex] || colData.colId[colIndex],
-                        type: colData.type[colIndex],
-                        visible: !field.hidden
-                    };
-                } catch (e) {
-                    return null;
+        // Filtre les colonnes de cette table
+        const tableColumns = [];
+        for (let i = 0; i < allColumns.id.length; i++) {
+            if (allColumns.parentId[i] === tableRecordId) {
+                const colId = allColumns.colId[i];
+                if (colId !== 'id' && !colId.startsWith('gristHelper_')) {
+                    tableColumns.push({
+                        id: colId,
+                        label: allColumns.label[i] || colId,
+                        type: allColumns.type[i],
+                        visible: true
+                    });
                 }
-            })
-        );
+            }
+        }
 
-        // Filtre les colonnes valides et visibles
-        const validColumns = columnsInfo.filter(col => col && col.visible && col.id !== 'id');
-
-        if (validColumns.length === 0) {
-            showMessage('Aucune colonne visible trouvée', 'error');
+        if (tableColumns.length === 0) {
+            showMessage('Aucune colonne trouvée', 'error');
             return;
         }
 
-        renderForm(validColumns);
+        renderForm(tableColumns);
     } catch (error) {
         console.error('Erreur lors du chargement:', error);
         showMessage('Erreur lors du chargement des données: ' + error.message, 'error');
