@@ -1,40 +1,71 @@
 document.addEventListener("DOMContentLoaded", function () {
     // Attendre que Grist soit prêt
     if (window.grist) {
+        // État global pour stocker les changements en attente
+        let pendingChanges = {};
+
+        // 1. Initialiser l'API Grist
         grist.ready({
-            // Demander à Grist les colonnes de la table sélectionnée
-            requiredAccess: "full",
-            columns: [
-                { name: "id", title: "ID", optional: true },
-            ],
+            requiredAccess: 'full'
         });
 
-        // Une fois que Grist est prêt et que les colonnes sont disponibles
         // 2. S'abonner aux données de l'enregistrement sélectionné
-        // 'records' contient la ligne actuellement sélectionnée (records[0])
-        // 'mappings' contient les IDs des colonnes configurées dans le widget (les colonnes "visibles").
         grist.onRecords((records, mappings) => {
             const record = records[0];
             const colIds = Object.keys(mappings);
             renderForm(record, colIds, mappings);
+
+            // Réinitialiser les changements et le bouton lorsque le record change
+            pendingChanges = {};
+            updateSubmitButton();
         });
 
-        // Fonction pour gérer la sauvegarde des modifications
+        // 3. Gérer les changements dans les champs de saisie
         function handleInput(event) {
             const input = event.target;
             const colId = input.dataset.colId;
             let newValue = input.value;
 
-            // La méthode setRecord prend un objet des modifications
-            // Le ID de l'enregistrement n'est pas nécessaire, Grist le déduit.
-            grist.setRecord({ [colId]: newValue });
-            // Pas de besoin de rafraîchir, Grist mettra à jour l'UI automatiquement.
+            // Stocker le changement en attente
+            pendingChanges[colId] = newValue;
+
+            // Activer le bouton d'envoi
+            updateSubmitButton();
         }
 
-        // Fonction pour rendre le formulaire dynamiquement
+        // 4. Gérer l'action d'envoi (clic sur le bouton)
+        function handleSubmit() {
+            if (Object.keys(pendingChanges).length > 0) {
+                // Envoyer toutes les modifications stockées à Grist
+                grist.setRecord(pendingChanges)
+                    .then(() => {
+                        // Réinitialiser après l'envoi réussi
+                        pendingChanges = {};
+                        updateSubmitButton();
+                    })
+                    .catch(error => {
+                        console.error("Erreur lors de l'enregistrement:", error);
+                        alert("Erreur lors de l'enregistrement. Consultez la console.");
+                    });
+            }
+        }
+
+        // 5. Mettre à jour l'état du bouton d'envoi
+        function updateSubmitButton() {
+            const btn = document.getElementById('submit-btn');
+            // Le bouton est actif s'il y a des changements en attente
+            btn.disabled = Object.keys(pendingChanges).length === 0;
+            // Assurez-vous que le gestionnaire d'événement est attaché (une seule fois)
+            if (!btn.hasClickListener) {
+                btn.addEventListener('click', handleSubmit);
+                btn.hasClickListener = true;
+            }
+        }
+
+        // 6. Rendre le formulaire dynamique
         function renderForm(record, colIds, mappings) {
             const formContainer = document.getElementById('form-container');
-            formContainer.innerHTML = ''; // Nettoyer le contenu précédent
+            formContainer.innerHTML = '';
 
             if (!record) {
                 formContainer.textContent = "Sélectionnez un enregistrement pour l'éditer.";
@@ -42,32 +73,31 @@ document.addEventListener("DOMContentLoaded", function () {
             }
 
             colIds.forEach(colId => {
-                // Filtrer les IDs systèmes
+                // Filtrer les IDs systèmes ('id', 'manualSort')
                 if (colId === 'id' || colId === 'manualSort' || !mappings[colId]) return;
 
                 const value = record[colId] !== undefined && record[colId] !== null ? record[colId] : '';
-                const label = mappings[colId].label; // Utilise le label configuré dans Grist
+                const label = mappings[colId].label;
 
                 const div = document.createElement('div');
-                div.className = 'form-group';
+                // ... (Création des labels et inputs) ...
 
                 const labelEl = document.createElement('label');
-                labelEl.textContent = label;
-                labelEl.htmlFor = `input-${colId}`;
+                labelEl.textContent = label + ':';
 
                 const inputEl = document.createElement('input');
-                inputEl.type = 'text'; // Type générique pour simplifier
-                inputEl.id = `input-${colId}`;
+                inputEl.type = 'text';
                 inputEl.value = value;
-                inputEl.dataset.colId = colId; // Stocke l'ID de colonne pour la sauvegarde
+                inputEl.dataset.colId = colId;
 
-                // Écouteur d'événement pour sauvegarder les modifications
-                inputEl.addEventListener('change', handleInput);
+                // Utiliser l'événement 'input' pour une mise à jour immédiate de l'état
+                inputEl.addEventListener('input', handleInput);
 
                 div.appendChild(labelEl);
                 div.appendChild(inputEl);
                 formContainer.appendChild(div);
             });
+            updateSubmitButton();
         }
 
         // Fonction pour générer le formulaire en fonction des colonnes
