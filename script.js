@@ -142,29 +142,29 @@ document.addEventListener("DOMContentLoaded", function () {
         }
 
         // Gestion de l'envoi du formulaire
-        document.getElementById("envoyer").addEventListener("click", function () {
-            const tableName = grist.doc.selectedTable;
-            const record = {};
+        // document.getElementById("envoyer").addEventListener("click", function () {
+        //     const tableName = grist.doc.selectedTable;
+        //     const record = {};
 
-            // Récupérer les valeurs des champs
-            document.querySelectorAll("#champs-formulaire input").forEach(input => {
-                record[input.id] = input.value;
-            });
+        //     // Récupérer les valeurs des champs
+        //     document.querySelectorAll("#champs-formulaire input").forEach(input => {
+        //         record[input.id] = input.value;
+        //     });
 
-            // Ajouter une nouvelle ligne à la table Grist
-            grist.doc.addRecord(tableName, record, function (err) {
-                if (err) {
-                    console.error("Erreur lors de l'ajout de la ligne :", err);
-                    alert("Erreur lors de l'envoi.");
-                } else {
-                    alert("Données enregistrées avec succès !");
-                    // Réinitialiser le formulaire
-                    document.querySelectorAll("#champs-formulaire input").forEach(input => {
-                        input.value = "";
-                    });
-                }
-            });
-        });
+        //     // Ajouter une nouvelle ligne à la table Grist
+        //     grist.doc.addRecord(tableName, record, function (err) {
+        //         if (err) {
+        //             console.error("Erreur lors de l'ajout de la ligne :", err);
+        //             alert("Erreur lors de l'envoi.");
+        //         } else {
+        //             alert("Données enregistrées avec succès !");
+        //             // Réinitialiser le formulaire
+        //             document.querySelectorAll("#champs-formulaire input").forEach(input => {
+        //                 input.value = "";
+        //             });
+        //         }
+        //     });
+        // });
     } else {
         console.error("L'API Grist n'est pas disponible.");
     }
