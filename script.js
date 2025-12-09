@@ -1,162 +1,193 @@
-// Variable globale pour stocker la table cible une fois le contexte chargé
-let targetTableId = null;
-let pendingChanges = {};
-console.log("WIDGET DÉMARRÉ : Initialisation de Grist API."); // DÉBUT
+let gristAPI;
+let visibleColumns = [];
+let tableId = null;
 
-// ----------------------------------------------------
-// 1. Initialiser et récupérer le contexte de la table cible
-// ----------------------------------------------------
-grist.ready({ requiredAccess: 'full' });
-
-// Écoutez le contexte pour obtenir l'ID de la table
-grist.onContext(context => {
-    console.log("CONTEXTE REÇU:", context); // 1. CONTEXTE DE BASE
-    if (context.tableId) {
-        targetTableId = context.tableId;
-        console.log("Table cible identifiée:", targetTableId);
-        loadColumns(targetTableId);
-    } else {
-        console.error("ERREUR : Aucune table cible identifiée dans le contexte.");
-        document.getElementById('form-container').textContent =
-            "Erreur : Le widget doit être lié à une table de données.";
-    }
+// Initialisation du widget
+grist.ready({
+    requiredAccess: 'full',
+    columns: []
 });
 
-// ----------------------------------------------------
-// 2. Charger les colonnes et rendre le formulaire
-// ----------------------------------------------------
-async function loadColumns(tableId) {
-    console.log(`Tentative de chargement des colonnes pour la table : ${tableId}`);
+// Écoute des changements dans Grist
+grist.onRecords(async (records, mappings) => {
+    await loadTableMetadata();
+});
+
+grist.onOptions(async (options, interaction) => {
+    await loadTableMetadata();
+});
+
+// Charge les métadonnées de la table
+async function loadTableMetadata() {
     try {
-        const columns = await grist.getColumns(tableId);
-        console.log("Colonnes RÉCUPÉRÉES. Nombre de colonnes (brut) :", columns.length);
-        renderCreationForm(columns);
-    } catch (error) {
-        console.error("ERREUR lors de l'appel grist.getColumns:", error);
-        document.getElementById('form-container').textContent = "Erreur lors du chargement des colonnes.";
-    }
-}
+        const table = await grist.getTable();
+        tableId = table?.tableId || await grist.selectedTable?.getTableId();
 
-// ----------------------------------------------------
-// 3. Rendu du formulaire de création
-// ----------------------------------------------------
-function renderCreationForm(columns) {
-    const formContainer = document.getElementById('form-container');
-    formContainer.innerHTML = '';
-    let visibleColumnsCount = 0;
-
-    columns.forEach(col => {
-        // Exclure les colonnes système
-        if (['id', 'manualSort', 'parent_id', 'group_id'].includes(col.id)) {
-            console.log(`Colonne ignorée (Système) : ${col.id}`);
+        if (!tableId) {
+            showMessage('Aucune table sélectionnée', 'error');
             return;
         }
 
-        const label = col.label;
-        const colId = col.id;
+        // Récupère les colonnes visibles
+        visibleColumns = await grist.viewApi.fetch(['fields']);
 
-        // ... (Création des éléments HTML) ...
-        // ... (Création des labels et inputs) ...
+        if (!visibleColumns || !visibleColumns.fields) {
+            showMessage('Impossible de charger les colonnes', 'error');
+            return;
+        }
 
-        console.log(`Champ créé pour : ${colId} (Label : ${label})`);
-        visibleColumnsCount++;
+        // Récupère les informations détaillées des colonnes
+        const columnsInfo = await Promise.all(
+            visibleColumns.fields.map(async (field) => {
+                try {
+                    const colId = field.colRef;
+                    const tables = await grist.docApi.fetchTable('_grist_Tables_column');
+                    const colData = tables._grist_Tables_column;
 
-        // ... (Ajout au DOM) ...
-    });
-    console.log("RENDU DU FORMULAIRE TERMINÉ. Nombre de champs affichés :", visibleColumnsCount);
-    updateSubmitButton();
-}
+                    const colIndex = colData.id.findIndex(id => id === colId);
 
-// ----------------------------------------------------
-// 4. Gérer les changements dans les champs de saisie
-// ----------------------------------------------------
-function handleInput(event) {
-    const input = event.target;
-    const colId = input.dataset.colId;
-    let newValue = input.value;
+                    if (colIndex === -1) return null;
 
-    // Stocker le changement en attente
-    pendingChanges[colId] = newValue;
-
-    console.log(`CHANGEMENT DÉTECTÉ : ${colId} => ${newValue}`);
-    console.log("Changements en attente :", pendingChanges);
-
-    updateSubmitButton();
-}
-
-// ----------------------------------------------------
-// 5. Fonction d'envoi pour la CRÉATION d'enregistrement
-// ----------------------------------------------------
-function handleSubmit() {
-    if (targetTableId && Object.keys(pendingChanges).length > 0) {
-        console.log("ACTION ENVOI DÉCLENCHÉE. Données envoyées à Grist :", pendingChanges);
-
-        grist.addRecord(targetTableId, pendingChanges)
-            .then(() => {
-                console.log("ENREGISTREMENT RÉUSSI. Réinitialisation du formulaire.");
-                alert("Enregistrement créé avec succès !");
-
-                // Réinitialisation du formulaire
-                document.getElementById('form-container').querySelectorAll('input').forEach(input => input.value = '');
-                pendingChanges = {};
-                updateSubmitButton();
+                    return {
+                        id: colData.colId[colIndex],
+                        label: colData.label[colIndex] || colData.colId[colIndex],
+                        type: colData.type[colIndex],
+                        visible: !field.hidden
+                    };
+                } catch (e) {
+                    return null;
+                }
             })
-            .catch(error => {
-                console.error("ERREUR LORS DE L'ENVOI (grist.addRecord) :", error);
-                alert("Erreur lors de la création. Consultez la console.");
-            });
-    } else {
-        console.warn("ENVOI BLOQUÉ : Aucune donnée à envoyer ou Table ID manquante.");
-    }
-}
-// ... (Les fonctions updateSubmitButton sont conservées, assurez-vous de l'attacher au bouton) ...
+        );
 
-// 5. Mettre à jour l'état du bouton d'envoi
-function updateSubmitButton() {
-    const btn = document.getElementById('submit-btn');
-    // Le bouton est actif s'il y a des changements en attente
-    btn.disabled = Object.keys(pendingChanges).length === 0;
-    // Assurez-vous que le gestionnaire d'événement est attaché (une seule fois)
-    if (!btn.hasClickListener) {
-        btn.addEventListener('click', handleSubmit);
-        btn.hasClickListener = true;
+        // Filtre les colonnes valides et visibles
+        const validColumns = columnsInfo.filter(col => col && col.visible && col.id !== 'id');
+
+        if (validColumns.length === 0) {
+            showMessage('Aucune colonne visible trouvée', 'error');
+            return;
+        }
+
+        renderForm(validColumns);
+    } catch (error) {
+        console.error('Erreur lors du chargement:', error);
+        showMessage('Erreur lors du chargement des données: ' + error.message, 'error');
     }
 }
 
-// 6. Rendre le formulaire dynamique
-function renderForm(record, colIds, mappings) {
-    const formContainer = document.getElementById('form-container');
-    formContainer.innerHTML = '';
+// Génère le formulaire
+function renderForm(columns) {
+    const formFields = document.getElementById('form-fields');
+    formFields.innerHTML = '';
 
-    if (!record) {
-        formContainer.textContent = "Sélectionnez un enregistrement pour l'éditer.";
-        return;
-    }
+    columns.forEach(col => {
+        const formGroup = document.createElement('div');
+        formGroup.className = 'form-group';
 
-    colIds.forEach(colId => {
-        // Filtrer les IDs systèmes ('id', 'manualSort')
-        if (colId === 'id' || colId === 'manualSort' || !mappings[colId]) return;
+        const label = document.createElement('label');
+        label.setAttribute('for', col.id);
+        label.textContent = col.label;
 
-        const value = record[colId] !== undefined && record[colId] !== null ? record[colId] : '';
-        const label = mappings[colId].label;
+        const input = createInputForType(col);
+        input.id = col.id;
+        input.name = col.id;
 
-        const div = document.createElement('div');
-        // ... (Création des labels et inputs) ...
-
-        const labelEl = document.createElement('label');
-        labelEl.textContent = label + ':';
-
-        const inputEl = document.createElement('input');
-        inputEl.type = 'text';
-        inputEl.value = value;
-        inputEl.dataset.colId = colId;
-
-        // Utiliser l'événement 'input' pour une mise à jour immédiate de l'état
-        inputEl.addEventListener('input', handleInput);
-
-        div.appendChild(labelEl);
-        div.appendChild(inputEl);
-        formContainer.appendChild(div);
+        formGroup.appendChild(label);
+        formGroup.appendChild(input);
+        formFields.appendChild(formGroup);
     });
-    updateSubmitButton();
 }
+
+// Crée le bon type d'input selon le type de colonne
+function createInputForType(column) {
+    const type = column.type;
+    let input;
+
+    if (type === 'Bool') {
+        input = document.createElement('input');
+        input.type = 'checkbox';
+    } else if (type === 'Int' || type === 'Numeric') {
+        input = document.createElement('input');
+        input.type = 'number';
+        if (type === 'Numeric') {
+            input.step = '0.01';
+        }
+    } else if (type === 'Date' || type === 'DateTime') {
+        input = document.createElement('input');
+        input.type = type === 'Date' ? 'date' : 'datetime-local';
+    } else if (type.startsWith('Text') || type === 'Text') {
+        input = document.createElement('textarea');
+    } else if (type.startsWith('Choice')) {
+        input = document.createElement('select');
+        const option = document.createElement('option');
+        option.value = '';
+        option.textContent = '-- Sélectionner --';
+        input.appendChild(option);
+    } else {
+        input = document.createElement('input');
+        input.type = 'text';
+    }
+
+    return input;
+}
+
+// Gestion de la soumission du formulaire
+document.getElementById('grist-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+
+    try {
+        const formData = new FormData(e.target);
+        const record = {};
+
+        for (const [key, value] of formData.entries()) {
+            const input = document.getElementById(key);
+
+            if (input.type === 'checkbox') {
+                record[key] = input.checked;
+            } else if (input.type === 'number') {
+                record[key] = value ? parseFloat(value) : null;
+            } else if (input.type === 'date' || input.type === 'datetime-local') {
+                record[key] = value ? new Date(value).getTime() / 1000 : null;
+            } else {
+                record[key] = value || null;
+            }
+        }
+
+        // Ajoute l'enregistrement à Grist
+        await grist.docApi.applyUserActions([
+            ['AddRecord', tableId, null, record]
+        ]);
+
+        showMessage('Enregistrement ajouté avec succès !', 'success');
+        e.target.reset();
+
+        setTimeout(() => {
+            hideMessage();
+        }, 3000);
+    } catch (error) {
+        console.error('Erreur lors de l\'enregistrement:', error);
+        showMessage('Erreur lors de l\'enregistrement: ' + error.message, 'error');
+    }
+});
+
+// Réinitialisation du formulaire
+document.getElementById('reset-btn').addEventListener('click', () => {
+    document.getElementById('grist-form').reset();
+    hideMessage();
+});
+
+// Affiche un message
+function showMessage(text, type) {
+    const messageDiv = document.getElementById('message');
+    messageDiv.textContent = text;
+    messageDiv.className = `message ${type}`;
+}
+
+// Cache le message
+function hideMessage() {
+    const messageDiv = document.getElementById('message');
+    messageDiv.style.display = 'none';
+}
+
+// Initialisation au chargement
+loadTableMetadata();

@@ -1,18 +1,26 @@
 <!DOCTYPE html>
-<html>
+<html lang="fr">
 
 <head>
     <meta charset="UTF-8">
-    <title>Formulaire dynamique Grist</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Formulaire Grist</title>
     <link rel="stylesheet" href="style.css">
     <script src="https://docs.getgrist.com/grist-plugin-api.js"></script>
 </head>
 
 <body>
-    <div id="form-container">
-        Sélectionnez un enregistrement pour l'éditer.
+    <div class="container">
+        <h1>Nouvelle entrée</h1>
+        <form id="grist-form">
+            <div id="form-fields"></div>
+            <div class="form-actions">
+                <button type="submit" class="btn btn-primary">Enregistrer</button>
+                <button type="button" class="btn btn-secondary" id="reset-btn">Réinitialiser</button>
+            </div>
+        </form>
+        <div id="message" class="message"></div>
     </div>
-    <button id="submit-btn" disabled>Envoyer test</button>
     <script src="script.js"></script>
 </body>
 
