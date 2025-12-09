@@ -1,7 +1,7 @@
 let tableId = null;
 let columnsList = [];
 
-console.log('DISP - Démarrage du script');
+console.log('DISP - Démarrage du script v15');
 
 // Fonction principale d'initialisation
 async function initializeWidget() {
