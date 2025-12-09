@@ -3,28 +3,72 @@ document.addEventListener("DOMContentLoaded", function () {
     if (window.grist) {
         grist.ready({
             // Demander à Grist les colonnes de la table sélectionnée
-            requiredAccess: "read table",
+            requiredAccess: "full",
             columns: [
                 { name: "id", title: "ID", optional: true },
             ],
         });
 
         // Une fois que Grist est prêt et que les colonnes sont disponibles
-        grist.on("message", function (msg) {
-            if (msg.type === "fetchSelectedTable") {
-                const tableName = msg.tableId;
-                grist.doc.fetchSelectedTable(tableName, function (err, table) {
-                    if (err) {
-                        console.error("Erreur lors de la récupération de la table :", err);
-                        return;
-                    }
-
-                    // Récupérer les colonnes de la table
-                    const colonnes = table.cols.map(col => col.id);
-                    afficherFormulaireDynamique(colonnes);
-                });
-            }
+        // 2. S'abonner aux données de l'enregistrement sélectionné
+        // 'records' contient la ligne actuellement sélectionnée (records[0])
+        // 'mappings' contient les IDs des colonnes configurées dans le widget (les colonnes "visibles").
+        grist.onRecords((records, mappings) => {
+            const record = records[0];
+            const colIds = Object.keys(mappings);
+            renderForm(record, colIds, mappings);
         });
+
+        // Fonction pour gérer la sauvegarde des modifications
+        function handleInput(event) {
+            const input = event.target;
+            const colId = input.dataset.colId;
+            let newValue = input.value;
+
+            // La méthode setRecord prend un objet des modifications
+            // Le ID de l'enregistrement n'est pas nécessaire, Grist le déduit.
+            grist.setRecord({ [colId]: newValue });
+            // Pas de besoin de rafraîchir, Grist mettra à jour l'UI automatiquement.
+        }
+
+        // Fonction pour rendre le formulaire dynamiquement
+        function renderForm(record, colIds, mappings) {
+            const formContainer = document.getElementById('form-container');
+            formContainer.innerHTML = ''; // Nettoyer le contenu précédent
+
+            if (!record) {
+                formContainer.textContent = "Sélectionnez un enregistrement pour l'éditer.";
+                return;
+            }
+
+            colIds.forEach(colId => {
+                // Filtrer les IDs systèmes
+                if (colId === 'id' || colId === 'manualSort' || !mappings[colId]) return;
+
+                const value = record[colId] !== undefined && record[colId] !== null ? record[colId] : '';
+                const label = mappings[colId].label; // Utilise le label configuré dans Grist
+
+                const div = document.createElement('div');
+                div.className = 'form-group';
+
+                const labelEl = document.createElement('label');
+                labelEl.textContent = label;
+                labelEl.htmlFor = `input-${colId}`;
+
+                const inputEl = document.createElement('input');
+                inputEl.type = 'text'; // Type générique pour simplifier
+                inputEl.id = `input-${colId}`;
+                inputEl.value = value;
+                inputEl.dataset.colId = colId; // Stocke l'ID de colonne pour la sauvegarde
+
+                // Écouteur d'événement pour sauvegarder les modifications
+                inputEl.addEventListener('change', handleInput);
+
+                div.appendChild(labelEl);
+                div.appendChild(inputEl);
+                formContainer.appendChild(div);
+            });
+        }
 
         // Fonction pour générer le formulaire en fonction des colonnes
         function afficherFormulaireDynamique(colonnes) {
