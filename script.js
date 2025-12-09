@@ -3,13 +3,6 @@ let columnsList = [];
 
 console.log('DISP - Démarrage du script');
 
-// Initialisation du widget
-grist.ready({
-    requiredAccess: 'full'
-});
-
-console.log('DISP - Widget initialisé avec grist.ready()');
-
 // Fonction principale d'initialisation
 async function initializeWidget() {
     console.log('DISP - Début de initializeWidget');
@@ -326,9 +319,20 @@ function hideMessage() {
 
 // Lance l'initialisation au démarrage
 console.log('DISP - Lancement de initializeWidget après ready');
-grist.ready().then(() => {
-    console.log('DISP - grist.ready() complété');
-    initializeWidget();
+grist.ready({
+    requiredAccess: 'full',
+    onEditOptions: () => {
+        console.log('DISP - Options éditées, rechargement');
+        initializeWidget();
+    }
 });
+
+console.log('DISP - grist.ready() appelé');
+
+// Attend un peu que Grist soit prêt puis initialise
+setTimeout(() => {
+    console.log('DISP - Démarrage de initializeWidget');
+    initializeWidget();
+}, 500);
 
 console.log('DISP - Fin du chargement initial du script');
