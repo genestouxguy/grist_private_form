@@ -1,6 +1,7 @@
 // Variable globale pour stocker la table cible une fois le contexte chargé
 let targetTableId = null;
 let pendingChanges = {};
+console.log("WIDGET DÉMARRÉ : Initialisation de Grist API."); // DÉBUT
 
 // ----------------------------------------------------
 // 1. Initialiser et récupérer le contexte de la table cible
@@ -9,12 +10,13 @@ grist.ready({ requiredAccess: 'full' });
 
 // Écoutez le contexte pour obtenir l'ID de la table
 grist.onContext(context => {
-    // Si le widget est lié à une table, son ID est dans le contexte.
+    console.log("CONTEXTE REÇU:", context); // 1. CONTEXTE DE BASE
     if (context.tableId) {
         targetTableId = context.tableId;
-        // Une fois l'ID de la table récupéré, on peut charger les colonnes
+        console.log("Table cible identifiée:", targetTableId);
         loadColumns(targetTableId);
     } else {
+        console.error("ERREUR : Aucune table cible identifiée dans le contexte.");
         document.getElementById('form-container').textContent =
             "Erreur : Le widget doit être lié à une table de données.";
     }
@@ -24,12 +26,14 @@ grist.onContext(context => {
 // 2. Charger les colonnes et rendre le formulaire
 // ----------------------------------------------------
 async function loadColumns(tableId) {
+    console.log(`Tentative de chargement des colonnes pour la table : ${tableId}`);
     try {
-        // Récupère toutes les définitions de colonnes de la table
         const columns = await grist.getColumns(tableId);
+        console.log("Colonnes RÉCUPÉRÉES. Nombre de colonnes (brut) :", columns.length);
         renderCreationForm(columns);
     } catch (error) {
-        document.getElementById('form-container').textContent = "Erreur lors du chargement des colonnes: " + error.message;
+        console.error("ERREUR lors de l'appel grist.getColumns:", error);
+        document.getElementById('form-container').textContent = "Erreur lors du chargement des colonnes.";
     }
 }
 
@@ -39,54 +43,33 @@ async function loadColumns(tableId) {
 function renderCreationForm(columns) {
     const formContainer = document.getElementById('form-container');
     formContainer.innerHTML = '';
+    let visibleColumnsCount = 0;
 
     columns.forEach(col => {
         // Exclure les colonnes système
-        if (['id', 'manualSort', 'parent_id'].includes(col.id)) return;
+        if (['id', 'manualSort', 'parent_id', 'group_id'].includes(col.id)) {
+            console.log(`Colonne ignorée (Système) : ${col.id}`);
+            return;
+        }
 
-        // Note: 'label' est l'intitulé que vous voyez dans Grist.
         const label = col.label;
         const colId = col.id;
 
-        const div = document.createElement('div');
-        // ... (création des labels et inputs comme dans la réponse précédente) ...
+        // ... (Création des éléments HTML) ...
+        // ... (Création des labels et inputs) ...
 
-        // ...
+        console.log(`Champ créé pour : ${colId} (Label : ${label})`);
+        visibleColumnsCount++;
 
-        // Écouteur d'événement pour stocker le changement en attente
-        inputEl.addEventListener('input', handleInput);
-
-        div.appendChild(labelEl);
-        div.appendChild(inputEl);
-        formContainer.appendChild(div);
+        // ... (Ajout au DOM) ...
     });
-    // S'assurer que le bouton est prêt
+    console.log("RENDU DU FORMULAIRE TERMINÉ. Nombre de champs affichés :", visibleColumnsCount);
     updateSubmitButton();
 }
 
 // ----------------------------------------------------
-// 4. Fonction d'envoi pour la CRÉATION d'enregistrement
+// 4. Gérer les changements dans les champs de saisie
 // ----------------------------------------------------
-function handleSubmit() {
-    if (targetTableId && Object.keys(pendingChanges).length > 0) {
-        // Utilisation de grist.addRecord pour la création
-        grist.addRecord(targetTableId, pendingChanges)
-            .then(() => {
-                alert("Enregistrement créé avec succès !");
-                // Optionnel : Effacer le formulaire après l'envoi
-                document.getElementById('form-container').querySelectorAll('input').forEach(input => input.value = '');
-                pendingChanges = {};
-                updateSubmitButton();
-            })
-            .catch(error => {
-                console.error("Erreur lors de la création de l'enregistrement:", error);
-                alert("Erreur lors de la création.");
-            });
-    }
-}
-// ... (Les fonctions handleInput et updateSubmitButton sont conservées) ...
-
-// 3. Gérer les changements dans les champs de saisie
 function handleInput(event) {
     const input = event.target;
     const colId = input.dataset.colId;
@@ -95,9 +78,38 @@ function handleInput(event) {
     // Stocker le changement en attente
     pendingChanges[colId] = newValue;
 
-    // Activer le bouton d'envoi
+    console.log(`CHANGEMENT DÉTECTÉ : ${colId} => ${newValue}`);
+    console.log("Changements en attente :", pendingChanges);
+
     updateSubmitButton();
 }
+
+// ----------------------------------------------------
+// 5. Fonction d'envoi pour la CRÉATION d'enregistrement
+// ----------------------------------------------------
+function handleSubmit() {
+    if (targetTableId && Object.keys(pendingChanges).length > 0) {
+        console.log("ACTION ENVOI DÉCLENCHÉE. Données envoyées à Grist :", pendingChanges);
+
+        grist.addRecord(targetTableId, pendingChanges)
+            .then(() => {
+                console.log("ENREGISTREMENT RÉUSSI. Réinitialisation du formulaire.");
+                alert("Enregistrement créé avec succès !");
+
+                // Réinitialisation du formulaire
+                document.getElementById('form-container').querySelectorAll('input').forEach(input => input.value = '');
+                pendingChanges = {};
+                updateSubmitButton();
+            })
+            .catch(error => {
+                console.error("ERREUR LORS DE L'ENVOI (grist.addRecord) :", error);
+                alert("Erreur lors de la création. Consultez la console.");
+            });
+    } else {
+        console.warn("ENVOI BLOQUÉ : Aucune donnée à envoyer ou Table ID manquante.");
+    }
+}
+// ... (Les fonctions updateSubmitButton sont conservées, assurez-vous de l'attacher au bouton) ...
 
 // 5. Mettre à jour l'état du bouton d'envoi
 function updateSubmitButton() {
