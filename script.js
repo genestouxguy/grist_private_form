@@ -1,68 +1,111 @@
-let visibleColumns = [];
 let tableId = null;
+let columnsList = [];
 
 // Initialisation du widget
 grist.ready({
-    requiredAccess: 'full'
+    requiredAccess: 'full',
+    columns: [
+        { name: 'columns', optional: true }
+    ]
 });
 
 // Écoute des changements dans Grist
 grist.onRecord(async (record, mappings) => {
-    await loadTableMetadata();
-});
-
-grist.onOptions(async (options) => {
-    await loadTableMetadata();
+    if (mappings) {
+        await loadTableMetadata(mappings);
+    }
 });
 
 // Charge les métadonnées de la table
-async function loadTableMetadata() {
+async function loadTableMetadata(mappings) {
     try {
-        const table = await grist.getTable();
-        tableId = table?.tableId;
+        // Récupère le tableId depuis les mappings
+        if (mappings && mappings.tableId) {
+            tableId = mappings.tableId;
+        } else {
+            // Fallback: essaie de récupérer via getTable
+            const table = await grist.getTable();
+            if (table && table.tableId) {
+                tableId = table.tableId;
+            }
+        }
 
         if (!tableId) {
             showMessage('Aucune table sélectionnée', 'error');
             return;
         }
 
-        // Récupère les options du widget pour les colonnes visibles
-        const options = await grist.widgetApi.getOption('columns');
-
-        // Récupère toutes les colonnes de la table
-        const tables = await grist.docApi.fetchTable('_grist_Tables_column');
-        const allColumns = tables._grist_Tables_column;
-
-        // Trouve l'ID de la table actuelle
-        const tablesData = await grist.docApi.fetchTable('_grist_Tables');
-        const tableIndex = tablesData._grist_Tables.tableId.indexOf(tableId);
-        const tableRecordId = tablesData._grist_Tables.id[tableIndex];
-
-        // Filtre les colonnes de cette table
-        const tableColumns = [];
-        for (let i = 0; i < allColumns.id.length; i++) {
-            if (allColumns.parentId[i] === tableRecordId) {
-                const colId = allColumns.colId[i];
-                if (colId !== 'id' && !colId.startsWith('gristHelper_')) {
-                    tableColumns.push({
-                        id: colId,
-                        label: allColumns.label[i] || colId,
-                        type: allColumns.type[i],
-                        visible: true
-                    });
+        // Récupère les colonnes mappées depuis le widget
+        let mappedColumns = [];
+        if (mappings) {
+            for (let key in mappings) {
+                if (key !== 'tableId' && mappings[key]) {
+                    mappedColumns.push(mappings[key]);
                 }
             }
         }
 
-        if (tableColumns.length === 0) {
-            showMessage('Aucune colonne trouvée', 'error');
+        // Récupère la structure de la table via fetchTable
+        let tableData;
+        try {
+            tableData = await grist.fetchSelectedTable();
+        } catch (e) {
+            console.log('fetchSelectedTable non disponible, essai avec fetchTable');
+            tableData = await grist.docApi.fetchTable(tableId);
+        }
+
+        if (!tableData || !tableData[tableId]) {
+            showMessage('Impossible de charger les données de la table', 'error');
             return;
         }
 
-        renderForm(tableColumns);
+        // Extrait les noms de colonnes depuis les données
+        const data = tableData[tableId];
+        const allColumnNames = Object.keys(data).filter(col =>
+            col !== 'id' &&
+            !col.startsWith('gristHelper_') &&
+            !col.startsWith('manualSort')
+        );
+
+        // Si on a des colonnes mappées, on les utilise, sinon on prend toutes les colonnes
+        const columnsToUse = mappedColumns.length > 0 ? mappedColumns : allColumnNames;
+
+        // Récupère les métadonnées des colonnes depuis _grist_Tables_column
+        const columnsMetadata = await grist.docApi.fetchTable('_grist_Tables_column');
+        const colData = columnsMetadata._grist_Tables_column;
+
+        // Construit la liste des colonnes avec leurs types
+        columnsList = columnsToUse
+            .filter(colName => colName && colName !== 'id')
+            .map(colName => {
+                // Trouve l'index de cette colonne dans les métadonnées
+                const colIndex = colData.colId.indexOf(colName);
+
+                let colType = 'Text';
+                let colLabel = colName;
+
+                if (colIndex !== -1) {
+                    colType = colData.type[colIndex] || 'Text';
+                    colLabel = colData.label[colIndex] || colName;
+                }
+
+                return {
+                    id: colName,
+                    label: colLabel,
+                    type: colType
+                };
+            });
+
+        if (columnsList.length === 0) {
+            showMessage('Aucune colonne disponible', 'error');
+            return;
+        }
+
+        renderForm(columnsList);
+        hideMessage();
     } catch (error) {
         console.error('Erreur lors du chargement:', error);
-        showMessage('Erreur lors du chargement des données: ' + error.message, 'error');
+        showMessage('Erreur lors du chargement: ' + error.message, 'error');
     }
 }
 
@@ -91,7 +134,7 @@ function renderForm(columns) {
 
 // Crée le bon type d'input selon le type de colonne
 function createInputForType(column) {
-    const type = column.type;
+    const type = column.type || 'Text';
     let input;
 
     if (type === 'Bool') {
@@ -126,12 +169,19 @@ function createInputForType(column) {
 document.getElementById('grist-form').addEventListener('submit', async (e) => {
     e.preventDefault();
 
+    if (!tableId) {
+        showMessage('Aucune table sélectionnée', 'error');
+        return;
+    }
+
     try {
         const formData = new FormData(e.target);
         const record = {};
 
         for (const [key, value] of formData.entries()) {
             const input = document.getElementById(key);
+
+            if (!input) continue;
 
             if (input.type === 'checkbox') {
                 record[key] = input.checked;
@@ -140,7 +190,7 @@ document.getElementById('grist-form').addEventListener('submit', async (e) => {
             } else if (input.type === 'date' || input.type === 'datetime-local') {
                 record[key] = value ? new Date(value).getTime() / 1000 : null;
             } else {
-                record[key] = value || null;
+                record[key] = value || '';
             }
         }
 
@@ -178,7 +228,12 @@ function showMessage(text, type) {
 function hideMessage() {
     const messageDiv = document.getElementById('message');
     messageDiv.style.display = 'none';
+    messageDiv.className = 'message';
 }
 
-// Initialisation au chargement
-loadTableMetadata();
+// Initialisation au chargement - attend que Grist envoie les données
+setTimeout(() => {
+    if (!tableId) {
+        showMessage('En attente de la sélection d\'une table...', 'error');
+    }
+}, 1000);
