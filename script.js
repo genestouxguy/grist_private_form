@@ -1,7 +1,7 @@
 let tableId = null;
 let columnsList = [];
 
-console.log('DISP - Démarrage du script');
+console.log('DISP - Démarrage du script v25');
 
 // Classe pour récupérer les types de colonnes (inspirée du widget calendar officiel)
 class ColTypesFetcher {
@@ -284,38 +284,58 @@ document.getElementById('grist-form').addEventListener('submit', async (e) => {
     }
 
     try {
-        const formData = new FormData(e.target);
         const record = {};
 
-        for (const [key, value] of formData.entries()) {
-            const input = document.getElementById(key);
+        // Parcourt tous les champs du formulaire
+        for (let i = 0; i < columnsList.length; i++) {
+            const col = columnsList[i];
+            const colId = col.id;
+            const input = document.getElementById(colId);
 
-            if (!input) continue;
+            if (!input) {
+                console.log('DISP - Input non trouvé pour:', colId);
+                continue;
+            }
+
+            console.log('DISP - Traitement champ:', colId, 'type:', input.type, 'value:', input.value);
+
+            let value;
 
             if (input.type === 'checkbox') {
-                record[key] = input.checked;
+                value = input.checked;
             } else if (input.type === 'number') {
-                record[key] = value ? parseFloat(value) : null;
+                value = input.value !== '' ? parseFloat(input.value) : null;
             } else if (input.type === 'date' || input.type === 'datetime-local') {
-                record[key] = value ? new Date(value).getTime() / 1000 : null;
+                if (input.value) {
+                    const date = new Date(input.value);
+                    value = Math.floor(date.getTime() / 1000);
+                } else {
+                    value = null;
+                }
             } else {
-                record[key] = value || '';
+                value = input.value || '';
             }
+
+            record[colId] = value;
+            console.log('DISP - Valeur assignée:', colId, '=', value, '(type:', typeof value, ')');
         }
 
-        console.log('DISP - Enregistrement:', record);
+        console.log('DISP - Record final:', JSON.stringify(record));
 
-        await grist.docApi.applyUserActions([
-            ['AddRecord', tableId, null, record]
-        ]);
+        const action = ['AddRecord', tableId, null, record];
+        console.log('DISP - Action à envoyer:', JSON.stringify(action));
 
-        console.log('DISP - Enregistrement ajouté');
+        await grist.docApi.applyUserActions([action]);
+
+        console.log('DISP - Enregistrement ajouté avec succès');
         showMessage('Enregistrement ajouté avec succès !', 'success');
-        e.target.reset();
+        document.getElementById('grist-form').reset();
 
         setTimeout(() => hideMessage(), 3000);
     } catch (error) {
         console.error('DISP - Erreur enregistrement:', error);
+        console.error('DISP - Message:', error.message);
+        console.error('DISP - Stack:', error.stack);
         showMessage('Erreur: ' + error.message, 'error');
     }
 });
