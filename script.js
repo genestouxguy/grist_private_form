@@ -1,7 +1,7 @@
 let tableId = null;
 let columnsList = [];
 
-console.log('DISP - Démarrage du script v20');
+console.log('DISP - Démarrage du script');
 
 // Initialisation du widget avec demande de configuration
 grist.ready({
@@ -91,13 +91,11 @@ async function loadAllColumns() {
 
     try {
         // Récupère les métadonnées des colonnes
-        const columnsData = await grist.docApi.fetchTable('_grist_Tables_column');
-        const allColumns = columnsData._grist_Tables_column;
+        const allColumns = await grist.docApi.fetchTable('_grist_Tables_column');
         console.log('DISP - Colonnes brutes:', allColumns);
 
         // Récupère l'ID de record de la table
-        const tablesData = await grist.docApi.fetchTable('_grist_Tables');
-        const tables = tablesData._grist_Tables;
+        const tables = await grist.docApi.fetchTable('_grist_Tables');
         const tableIndex = tables.tableId.indexOf(tableId);
         console.log('DISP - Index de la table:', tableIndex);
 
@@ -136,14 +134,9 @@ async function loadColumnsMetadata(columnNames) {
     console.log('DISP - loadColumnsMetadata pour:', columnNames);
 
     try {
-        const columnsDataResponse = await grist.docApi.fetchTable('_grist_Tables_column');
-        const colsTest = await grist.docApi.fetchTable(grist.selectedTable);
-        console.log('DISP - Réponse fetchTable complète:', columnsDataResponse);
-        console.log('DISP - Réponse fetchTable complète:', colsTest);
-
-        // La structure est { _grist_Tables_column: { id: [...], colId: [...], ... } }
-        const colData = columnsDataResponse._grist_Tables_column;
-        console.log('DISP - colData extrait:', colData);
+        // Récupère les métadonnées de toutes les colonnes
+        const colData = await grist.docApi.fetchTable('_grist_Tables_column');
+        console.log('DISP - Réponse fetchTable:', colData);
 
         if (!colData || !colData.colId) {
             console.log('DISP - ERREUR: colData invalide');
@@ -151,20 +144,48 @@ async function loadColumnsMetadata(columnNames) {
             return;
         }
 
-        console.log('DISP - Nombre de colonnes dans _grist_Tables_column:', colData.colId.length);
-        console.log('DISP - Quelques colIds:', colData.colId.slice(0, 10));
+        console.log('DISP - Nombre total de colonnes:', colData.colId.length);
 
+        // Récupère l'ID de record de notre table pour filtrer
+        const tablesData = await grist.docApi.fetchTable('_grist_Tables');
+        console.log('DISP - Tables data:', tablesData);
+
+        const tableIndex = tablesData.tableId.indexOf(tableId);
+        console.log('DISP - Index de la table', tableId, ':', tableIndex);
+
+        if (tableIndex === -1) {
+            console.log('DISP - ERREUR: Table non trouvée');
+            showMessage('Table non trouvée: ' + tableId, 'error');
+            return;
+        }
+
+        const tableRecordId = tablesData.id[tableIndex];
+        console.log('DISP - Table record ID:', tableRecordId);
+
+        // Construit la liste des colonnes avec leurs métadonnées
         columnsList = columnNames.map(colName => {
             const colIndex = colData.colId.indexOf(colName);
-            console.log('DISP - Traitement colonne:', colName, 'index:', colIndex);
+            console.log('DISP - Recherche colonne:', colName, 'index trouvé:', colIndex);
 
             let colType = 'Text';
             let colLabel = colName;
 
-            if (colIndex !== -1) {
+            // Vérifie que la colonne appartient bien à notre table
+            if (colIndex !== -1 && colData.parentId[colIndex] === tableRecordId) {
                 colType = colData.type[colIndex] || 'Text';
                 colLabel = colData.label[colIndex] || colName;
-                console.log('DISP - Type:', colType, 'Label:', colLabel);
+                console.log('DISP - Colonne validée - Type:', colType, 'Label:', colLabel);
+            } else if (colIndex !== -1) {
+                console.log('DISP - ATTENTION: Colonne trouvée mais parentId différent:', colData.parentId[colIndex], 'vs', tableRecordId);
+                // Cherche la bonne occurrence de cette colonne pour notre table
+                for (let i = 0; i < colData.colId.length; i++) {
+                    if (colData.colId[i] === colName && colData.parentId[i] === tableRecordId) {
+                        colType = colData.type[i] || 'Text';
+                        colLabel = colData.label[i] || colName;
+                        console.log('DISP - Bonne colonne trouvée à l\'index:', i, 'Type:', colType, 'Label:', colLabel);
+                        break;
+                    }
+                }
             } else {
                 console.log('DISP - ATTENTION: Colonne non trouvée dans les métadonnées');
             }
