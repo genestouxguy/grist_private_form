@@ -137,7 +137,9 @@ async function loadColumnsMetadata(columnNames) {
 
     try {
         const columnsDataResponse = await grist.docApi.fetchTable('_grist_Tables_column');
+        const colsTest = await grist.docApi.fetchTable(grist.selectedTable);
         console.log('DISP - Réponse fetchTable complète:', columnsDataResponse);
+        console.log('DISP - Réponse fetchTable complète:', colsTest);
 
         // La structure est { _grist_Tables_column: { id: [...], colId: [...], ... } }
         const colData = columnsDataResponse._grist_Tables_column;
