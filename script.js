@@ -3,13 +3,60 @@ let columnsList = [];
 
 console.log('DISP - Démarrage du script');
 
+// Classe pour récupérer les types de colonnes (inspirée du widget calendar officiel)
+class ColTypesFetcher {
+    constructor() {
+        this._columnsCache = null;
+    }
+
+    async fetchTypes() {
+        if (this._columnsCache) {
+            return this._columnsCache;
+        }
+
+        console.log('DISP - Récupération des métadonnées des colonnes');
+        const tableData = await grist.docApi.fetchTable('_grist_Tables_column');
+        console.log('DISP - Données brutes reçues:', tableData);
+
+        const result = {};
+        for (let i = 0; i < tableData.id.length; i++) {
+            const colId = tableData.colId[i];
+            result[colId] = {
+                type: tableData.type[i],
+                label: tableData.label[i] || colId,
+                parentId: tableData.parentId[i]
+            };
+        }
+
+        console.log('DISP - Cache des colonnes construit:', Object.keys(result).length, 'colonnes');
+        this._columnsCache = result;
+        return result;
+    }
+
+    getType(colId) {
+        if (!this._columnsCache || !this._columnsCache[colId]) {
+            return 'Text';
+        }
+        return this._columnsCache[colId].type;
+    }
+
+    getLabel(colId) {
+        if (!this._columnsCache || !this._columnsCache[colId]) {
+            return colId;
+        }
+        return this._columnsCache[colId].label;
+    }
+}
+
+const colTypesFetcher = new ColTypesFetcher();
+
 // Initialisation du widget avec demande de configuration
 grist.ready({
     requiredAccess: 'full',
     columns: [{
         name: 'Colonnes',
         title: 'Colonnes à afficher dans le formulaire',
-        optional: false,
+        optional: true,
         type: 'Text',
         allowMultiple: true
     }]
@@ -37,7 +84,7 @@ async function loadFromMappings(mappings) {
         // Récupère le tableId
         if (mappings.tableId) {
             tableId = mappings.tableId;
-            console.log('DISP - TableId trouvé:', tableId);
+            console.log('DISP - TableId trouvé dans mappings:', tableId);
         } else {
             console.log('DISP - Pas de tableId dans mappings');
             // Essaie via selectedTable
@@ -54,6 +101,9 @@ async function loadFromMappings(mappings) {
             showMessage('Veuillez configurer la table dans les options du widget', 'error');
             return;
         }
+
+        // Précharge les types de colonnes
+        await colTypesFetcher.fetchTypes();
 
         // Récupère les colonnes mappées
         const mappedColumns = [];
@@ -76,128 +126,16 @@ async function loadFromMappings(mappings) {
             return;
         }
 
-        // Charge les métadonnées pour ces colonnes
-        await loadColumnsMetadata(mappedColumns);
-
-    } catch (error) {
-        console.error('DISP - Erreur dans loadFromMappings:', error);
-        showMessage('Erreur: ' + error.message, 'error');
-    }
-}
-
-// Charge toutes les colonnes de la table
-async function loadAllColumns() {
-    console.log('DISP - loadAllColumns pour table:', tableId);
-
-    try {
-        // Récupère les métadonnées des colonnes
-        const allColumns = await grist.docApi.fetchTable('_grist_Tables_column');
-        console.log('DISP - Colonnes brutes:', allColumns);
-
-        // Récupère l'ID de record de la table
-        const tables = await grist.docApi.fetchTable('_grist_Tables');
-        const tableIndex = tables.tableId.indexOf(tableId);
-        console.log('DISP - Index de la table:', tableIndex);
-
-        if (tableIndex === -1) {
-            console.log('DISP - ERREUR: Table non trouvée');
-            showMessage('Table non trouvée: ' + tableId, 'error');
-            return;
-        }
-
-        const tableRecordId = tables.id[tableIndex];
-        console.log('DISP - Table record ID:', tableRecordId);
-
-        // Filtre les colonnes de cette table
-        const columnNames = [];
-        for (let i = 0; i < allColumns.id.length; i++) {
-            if (allColumns.parentId[i] === tableRecordId) {
-                const colId = allColumns.colId[i];
-                if (colId !== 'id' && !colId.startsWith('gristHelper_') && !colId.startsWith('manualSort')) {
-                    columnNames.push(colId);
-                    console.log('DISP - Colonne trouvée:', colId);
-                }
-            }
-        }
-
-        console.log('DISP - Colonnes à charger:', columnNames);
-        await loadColumnsMetadata(columnNames);
-
-    } catch (error) {
-        console.error('DISP - Erreur dans loadAllColumns:', error);
-        showMessage('Erreur: ' + error.message, 'error');
-    }
-}
-
-// Charge les métadonnées des colonnes
-async function loadColumnsMetadata(columnNames) {
-    console.log('DISP - loadColumnsMetadata pour:', columnNames);
-
-    try {
-        // Récupère les métadonnées de toutes les colonnes
-        const colData = await grist.docApi.fetchTable('_grist_Tables_column');
-        console.log('DISP - Réponse fetchTable:', colData);
-
-        if (!colData || !colData.colId) {
-            console.log('DISP - ERREUR: colData invalide');
-            showMessage('Impossible de charger les métadonnées des colonnes', 'error');
-            return;
-        }
-
-        console.log('DISP - Nombre total de colonnes:', colData.colId.length);
-
-        // Récupère l'ID de record de notre table pour filtrer
-        const tablesData = await grist.docApi.fetchTable('_grist_Tables');
-        console.log('DISP - Tables data:', tablesData);
-
-        const tableIndex = tablesData.tableId.indexOf(grist.selectedTable);
-        console.log('DISP - Index de la table', grist.selectedTable, ':', tableIndex);
-
-        if (tableIndex === -1) {
-            console.log('DISP - ERREUR: Table non trouvée');
-            showMessage('Table non trouvée: ' + grist.selectedTable, 'error');
-            return;
-        }
-
-        const tableRecordId = tablesData.id[tableIndex];
-        console.log('DISP - Table record ID:', tableRecordId);
-
         // Construit la liste des colonnes avec leurs métadonnées
-        columnsList = columnNames.map(colName => {
-            const colIndex = colData.colId.indexOf(colName);
-            console.log('DISP - Recherche colonne:', colName, 'index trouvé:', colIndex);
-
-            let colType = 'Text';
-            let colLabel = colName;
-
-            // Vérifie que la colonne appartient bien à notre table
-            if (colIndex !== -1 && colData.parentId[colIndex] === tableRecordId) {
-                colType = colData.type[colIndex] || 'Text';
-                colLabel = colData.label[colIndex] || colName;
-                console.log('DISP - Colonne validée - Type:', colType, 'Label:', colLabel);
-            } else if (colIndex !== -1) {
-                console.log('DISP - ATTENTION: Colonne trouvée mais parentId différent:', colData.parentId[colIndex], 'vs', tableRecordId);
-                // Cherche la bonne occurrence de cette colonne pour notre table
-                for (let i = 0; i < colData.colId.length; i++) {
-                    if (colData.colId[i] === colName && colData.parentId[i] === tableRecordId) {
-                        colType = colData.type[i] || 'Text';
-                        colLabel = colData.label[i] || colName;
-                        console.log('DISP - Bonne colonne trouvée à l\'index:', i, 'Type:', colType, 'Label:', colLabel);
-                        break;
-                    }
-                }
-            } else {
-                console.log('DISP - ATTENTION: Colonne non trouvée dans les métadonnées');
-            }
-
+        columnsList = mappedColumns.map(colName => {
             return {
                 id: colName,
-                label: colLabel,
-                type: colType
+                label: colTypesFetcher.getLabel(colName),
+                type: colTypesFetcher.getType(colName)
             };
         });
 
-        console.log('DISP - Liste finale:', columnsList);
+        console.log('DISP - Liste finale des colonnes:', columnsList);
 
         if (columnsList.length === 0) {
             console.log('DISP - ERREUR: Liste vide');
@@ -210,8 +148,58 @@ async function loadColumnsMetadata(columnNames) {
         setTimeout(() => hideMessage(), 2000);
 
     } catch (error) {
-        console.error('DISP - Erreur dans loadColumnsMetadata:', error);
-        console.error('DISP - Stack:', error.stack);
+        console.error('DISP - Erreur dans loadFromMappings:', error);
+        showMessage('Erreur: ' + error.message, 'error');
+    }
+}
+
+// Charge toutes les colonnes de la table
+async function loadAllColumns() {
+    console.log('DISP - loadAllColumns pour table:', tableId);
+
+    try {
+        // Récupère toutes les données de la table pour connaître ses colonnes
+        const tableData = await grist.docApi.fetchTable(tableId);
+        console.log('DISP - Données de la table:', tableData);
+
+        if (!tableData) {
+            console.log('DISP - ERREUR: Pas de données pour la table');
+            showMessage('Impossible de charger les colonnes de la table', 'error');
+            return;
+        }
+
+        // Les clés de l'objet sont les noms des colonnes
+        const columnNames = Object.keys(tableData).filter(col =>
+            col !== 'id' &&
+            !col.startsWith('gristHelper_') &&
+            !col.startsWith('manualSort')
+        );
+
+        console.log('DISP - Colonnes trouvées:', columnNames);
+
+        if (columnNames.length === 0) {
+            console.log('DISP - ERREUR: Aucune colonne');
+            showMessage('Aucune colonne trouvée dans la table', 'error');
+            return;
+        }
+
+        // Construit la liste des colonnes avec leurs métadonnées
+        columnsList = columnNames.map(colName => {
+            return {
+                id: colName,
+                label: colTypesFetcher.getLabel(colName),
+                type: colTypesFetcher.getType(colName)
+            };
+        });
+
+        console.log('DISP - Liste finale des colonnes:', columnsList);
+
+        renderForm(columnsList);
+        showMessage('Formulaire chargé (' + columnsList.length + ' champs)', 'success');
+        setTimeout(() => hideMessage(), 2000);
+
+    } catch (error) {
+        console.error('DISP - Erreur dans loadAllColumns:', error);
         showMessage('Erreur: ' + error.message, 'error');
     }
 }
@@ -229,7 +217,7 @@ function renderForm(columns) {
     formFields.innerHTML = '';
 
     columns.forEach((col, index) => {
-        console.log('DISP - Création champ', index + 1, ':', col.id);
+        console.log('DISP - Création champ', index + 1, ':', col.id, '(', col.label, ')');
 
         const formGroup = document.createElement('div');
         formGroup.className = 'form-group';
