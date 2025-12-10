@@ -1,7 +1,7 @@
 let tableId = null;
 let columnsList = [];
 
-console.log('DISP - Démarrage du script 19');
+console.log('DISP - Démarrage du script v20');
 
 // Initialisation du widget avec demande de configuration
 grist.ready({
@@ -42,7 +42,7 @@ async function loadFromMappings(mappings) {
             console.log('DISP - Pas de tableId dans mappings');
             // Essaie via selectedTable
             const table = grist.selectedTable;
-            console.log('DISP - selectedTable() résultat:', table);
+            console.log('DISP - selectedTable résultat:', table);
             if (table) {
                 tableId = table;
                 console.log('DISP - TableId via selectedTable:', tableId);
@@ -136,9 +136,21 @@ async function loadColumnsMetadata(columnNames) {
     console.log('DISP - loadColumnsMetadata pour:', columnNames);
 
     try {
-        const columnsData = await grist.docApi.fetchTable('_grist_Tables_column');
-        const colData = columnsData._grist_Tables_column;
-        console.log('DISP - Métadonnées récupérées');
+        const columnsDataResponse = await grist.docApi.fetchTable('_grist_Tables_column');
+        console.log('DISP - Réponse fetchTable complète:', columnsDataResponse);
+
+        // La structure est { _grist_Tables_column: { id: [...], colId: [...], ... } }
+        const colData = columnsDataResponse._grist_Tables_column;
+        console.log('DISP - colData extrait:', colData);
+
+        if (!colData || !colData.colId) {
+            console.log('DISP - ERREUR: colData invalide');
+            showMessage('Impossible de charger les métadonnées des colonnes', 'error');
+            return;
+        }
+
+        console.log('DISP - Nombre de colonnes dans _grist_Tables_column:', colData.colId.length);
+        console.log('DISP - Quelques colIds:', colData.colId.slice(0, 10));
 
         columnsList = columnNames.map(colName => {
             const colIndex = colData.colId.indexOf(colName);
@@ -151,6 +163,8 @@ async function loadColumnsMetadata(columnNames) {
                 colType = colData.type[colIndex] || 'Text';
                 colLabel = colData.label[colIndex] || colName;
                 console.log('DISP - Type:', colType, 'Label:', colLabel);
+            } else {
+                console.log('DISP - ATTENTION: Colonne non trouvée dans les métadonnées');
             }
 
             return {
@@ -174,6 +188,7 @@ async function loadColumnsMetadata(columnNames) {
 
     } catch (error) {
         console.error('DISP - Erreur dans loadColumnsMetadata:', error);
+        console.error('DISP - Stack:', error.stack);
         showMessage('Erreur: ' + error.message, 'error');
     }
 }
