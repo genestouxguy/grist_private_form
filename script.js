@@ -150,12 +150,12 @@ async function loadColumnsMetadata(columnNames) {
         const tablesData = await grist.docApi.fetchTable('_grist_Tables');
         console.log('DISP - Tables data:', tablesData);
 
-        const tableIndex = tablesData.tableId.indexOf(tableId);
-        console.log('DISP - Index de la table', tableId, ':', tableIndex);
+        const tableIndex = tablesData.tableId.indexOf(grist.selectedTable);
+        console.log('DISP - Index de la table', grist.selectedTable, ':', tableIndex);
 
         if (tableIndex === -1) {
             console.log('DISP - ERREUR: Table non trouvée');
-            showMessage('Table non trouvée: ' + tableId, 'error');
+            showMessage('Table non trouvée: ' + grist.selectedTable, 'error');
             return;
         }
 
