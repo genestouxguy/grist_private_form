@@ -57,7 +57,7 @@ grist.ready({
         name: 'Colonnes',
         title: 'Colonnes à afficher dans le formulaire',
         optional: true,
-        type: 'Text',
+        type: ['Text', 'Choice', 'Int', 'Numeric', 'Bool', 'Date', 'DateTime'],
         allowMultiple: true
     }]
 });
