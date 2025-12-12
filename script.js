@@ -1,7 +1,7 @@
 let tableId = null;
 let columnsList = [];
 
-console.log('DISP - Démarrage du script v25');
+console.log('DISP - Démarrage du script');
 
 // Classe pour récupérer les types de colonnes (inspirée du widget calendar officiel)
 class ColTypesFetcher {
@@ -83,16 +83,22 @@ async function loadFromMappings(mappings) {
     try {
         // Récupère le tableId
         if (mappings.tableId) {
-            tableId = mappings.tableId;
+            tableId = String(mappings.tableId);
             console.log('DISP - TableId trouvé dans mappings:', tableId);
         } else {
             console.log('DISP - Pas de tableId dans mappings');
-            // Essaie via selectedTable
-            const table = grist.selectedTable;
-            console.log('DISP - selectedTable résultat:', table);
-            if (table) {
-                tableId = table;
-                console.log('DISP - TableId via selectedTable:', tableId);
+            // Pour une page de widget, on récupère le nom de la table depuis les données
+            const tables = await grist.docApi.fetchTable('_grist_Tables');
+            console.log('DISP - Tables disponibles:', tables.tableId);
+
+            // Si on n'a qu'une seule table utilisateur, on la prend
+            const userTables = tables.tableId.filter(id => !id.startsWith('_grist_'));
+            console.log('DISP - Tables utilisateur:', userTables);
+
+            if (userTables.length > 0) {
+                // Cherche la table "Clients" ou prend la première
+                tableId = userTables.includes('Clients') ? 'Clients' : userTables[0];
+                console.log('DISP - TableId sélectionné:', tableId);
             }
         }
 
@@ -101,6 +107,8 @@ async function loadFromMappings(mappings) {
             showMessage('Veuillez configurer la table dans les options du widget', 'error');
             return;
         }
+
+        console.log('DISP - TableId final (type):', typeof tableId, tableId);
 
         // Précharge les types de colonnes
         await colTypesFetcher.fetchTypes();
@@ -156,6 +164,13 @@ async function loadFromMappings(mappings) {
 // Charge toutes les colonnes de la table
 async function loadAllColumns() {
     console.log('DISP - loadAllColumns pour table:', tableId);
+
+    // S'assure que tableId est une string
+    if (typeof tableId !== 'string') {
+        console.log('DISP - ATTENTION: tableId n\'est pas une string:', typeof tableId, tableId);
+        showMessage('Erreur: tableId invalide', 'error');
+        return;
+    }
 
     try {
         // Récupère toutes les données de la table pour connaître ses colonnes
@@ -276,6 +291,8 @@ document.getElementById('grist-form').addEventListener('submit', async (e) => {
     e.preventDefault();
 
     console.log('DISP - Soumission du formulaire');
+    console.log('DISP - tableId:', tableId);
+    console.log('DISP - columnsList:', columnsList);
 
     if (!tableId) {
         console.log('DISP - ERREUR: Pas de tableId');
@@ -288,8 +305,7 @@ document.getElementById('grist-form').addEventListener('submit', async (e) => {
 
         // Parcourt tous les champs du formulaire
         for (let i = 0; i < columnsList.length; i++) {
-            const col = columnsList[i];
-            const colId = col.id;
+            const colId = String(columnsList[i].id);
             const input = document.getElementById(colId);
 
             if (!input) {
@@ -302,9 +318,9 @@ document.getElementById('grist-form').addEventListener('submit', async (e) => {
             let value;
 
             if (input.type === 'checkbox') {
-                value = input.checked;
+                value = Boolean(input.checked);
             } else if (input.type === 'number') {
-                value = input.value !== '' ? parseFloat(input.value) : null;
+                value = input.value !== '' ? Number(input.value) : null;
             } else if (input.type === 'date' || input.type === 'datetime-local') {
                 if (input.value) {
                     const date = new Date(input.value);
@@ -313,20 +329,32 @@ document.getElementById('grist-form').addEventListener('submit', async (e) => {
                     value = null;
                 }
             } else {
-                value = input.value || '';
+                value = String(input.value || '');
             }
 
             record[colId] = value;
             console.log('DISP - Valeur assignée:', colId, '=', value, '(type:', typeof value, ')');
         }
 
-        console.log('DISP - Record final:', JSON.stringify(record));
+        console.log('DISP - Record final:', record);
 
-        const action = ['AddRecord', tableId, null, record];
-        console.log('DISP - Action à envoyer:', JSON.stringify(action));
+        // Sérialise pour vérifier
+        try {
+            const serialized = JSON.stringify(record);
+            console.log('DISP - Record sérialisé:', serialized);
+        } catch (e) {
+            console.error('DISP - ERREUR de sérialisation:', e);
+            showMessage('Erreur: impossible de sérialiser les données', 'error');
+            return;
+        }
 
-        await grist.docApi.applyUserActions([action]);
+        console.log('DISP - Appel applyUserActions...');
 
+        const result = await grist.docApi.applyUserActions([
+            ['AddRecord', String(tableId), null, record]
+        ]);
+
+        console.log('DISP - Résultat:', result);
         console.log('DISP - Enregistrement ajouté avec succès');
         showMessage('Enregistrement ajouté avec succès !', 'success');
         document.getElementById('grist-form').reset();
@@ -335,7 +363,8 @@ document.getElementById('grist-form').addEventListener('submit', async (e) => {
     } catch (error) {
         console.error('DISP - Erreur enregistrement:', error);
         console.error('DISP - Message:', error.message);
-        console.error('DISP - Stack:', error.stack);
+        console.error('DISP - Type error:', typeof error);
+        console.error('DISP - Error keys:', Object.keys(error));
         showMessage('Erreur: ' + error.message, 'error');
     }
 });
