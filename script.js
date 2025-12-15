@@ -1,6 +1,7 @@
 let tableId = null;
 let columnsList = [];
 let referenceTables = {}; // Cache pour les données des tables référencées
+let isRendering = false; // Flag pour éviter les rendus simultanés
 
 console.log('DISP - Démarrage du script');
 
@@ -66,9 +67,15 @@ console.log('DISP - Widget initialisé avec grist.ready()');
 
 // Fonction appelée quand les données changent
 grist.onRecords(async (records, mappings) => {
-    console.log('DISP - onRecords appelé');
+    console.log('DISP - onRecords appelé, isRendering:', isRendering);
     console.log('DISP - Records:', records);
     console.log('DISP - Mappings:', mappings);
+
+    // Évite les appels simultanés
+    if (isRendering) {
+        console.log('DISP - Rendu déjà en cours, ignoré');
+        return;
+    }
 
     if (mappings) {
         await loadFromMappings(mappings);
@@ -221,40 +228,52 @@ async function loadAllColumns() {
 
 // Génère le formulaire
 async function renderForm(columns) {
-    console.log('DISP - renderForm avec', columns.length, 'colonnes');
-    const formFields = document.getElementById('form-fields');
+    console.log('DISP - renderForm avec', columns.length, 'colonnes, isRendering:', isRendering);
 
-    if (!formFields) {
-        console.log('DISP - ERREUR: form-fields non trouvé');
+    if (isRendering) {
+        console.log('DISP - ATTENTION: renderForm déjà en cours, abandon');
         return;
     }
 
-    // Vide complètement le formulaire et réinitialise le cache
-    formFields.innerHTML = '';
-    referenceTables = {}; // Réinitialise le cache pour éviter les doublons
-    console.log('DISP - Formulaire vidé et cache réinitialisé');
+    isRendering = true;
 
-    for (let i = 0; i < columns.length; i++) {
-        const col = columns[i];
-        console.log('DISP - Création champ', i + 1, ':', col.id, '(', col.label, ') type:', col.type);
+    try {
+        const formFields = document.getElementById('form-fields');
 
-        const formGroup = document.createElement('div');
-        formGroup.className = 'form-group';
+        if (!formFields) {
+            console.log('DISP - ERREUR: form-fields non trouvé');
+            return;
+        }
 
-        const label = document.createElement('label');
-        label.setAttribute('for', col.id);
-        label.textContent = col.label;
+        // Vide complètement le formulaire
+        formFields.innerHTML = '';
+        console.log('DISP - Formulaire vidé');
 
-        const input = await createInputForType(col);
-        input.id = col.id;
-        input.name = col.id;
+        for (let i = 0; i < columns.length; i++) {
+            const col = columns[i];
+            console.log('DISP - Création champ', i + 1, '/', columns.length, ':', col.id, '(', col.label, ') type:', col.type);
 
-        formGroup.appendChild(label);
-        formGroup.appendChild(input);
-        formFields.appendChild(formGroup);
+            const formGroup = document.createElement('div');
+            formGroup.className = 'form-group';
+
+            const label = document.createElement('label');
+            label.setAttribute('for', col.id);
+            label.textContent = col.label;
+
+            const input = await createInputForType(col);
+            input.id = col.id;
+            input.name = col.id;
+
+            formGroup.appendChild(label);
+            formGroup.appendChild(input);
+            formFields.appendChild(formGroup);
+        }
+
+        console.log('DISP - Formulaire rendu:', formFields.children.length, 'champs');
+    } finally {
+        isRendering = false;
+        console.log('DISP - isRendering remis à false');
     }
-
-    console.log('DISP - Formulaire rendu:', formFields.children.length, 'champs');
 }
 
 // Crée le bon type d'input selon le type de colonne
