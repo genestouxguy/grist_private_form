@@ -59,7 +59,6 @@ grist.ready({
         title: 'Colonnes à afficher dans le formulaire',
         optional: true,
         allowMultiple: true
-        // Pas de 'type' spécifié = accepte tous les types
     }]
 });
 
@@ -230,11 +229,14 @@ async function renderForm(columns) {
         return;
     }
 
+    // Vide complètement le formulaire et réinitialise le cache
     formFields.innerHTML = '';
+    referenceTables = {}; // Réinitialise le cache pour éviter les doublons
+    console.log('DISP - Formulaire vidé et cache réinitialisé');
 
     for (let i = 0; i < columns.length; i++) {
         const col = columns[i];
-        console.log('DISP - Création champ', i + 1, ':', col.id, '(', col.label, ')');
+        console.log('DISP - Création champ', i + 1, ':', col.id, '(', col.label, ') type:', col.type);
 
         const formGroup = document.createElement('div');
         formGroup.className = 'form-group';
