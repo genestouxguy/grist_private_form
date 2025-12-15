@@ -1,5 +1,6 @@
 let tableId = null;
 let columnsList = [];
+let referenceTables = {}; // Cache pour les données des tables référencées
 
 console.log('DISP - Démarrage du script');
 
@@ -57,7 +58,7 @@ grist.ready({
         name: 'Colonnes',
         title: 'Colonnes à afficher dans le formulaire',
         optional: true,
-        type: ['Text', 'Choice', 'Int', 'Numeric', 'Bool', 'Date', 'DateTime'],
+        type: 'Text',
         allowMultiple: true
     }]
 });
@@ -220,7 +221,7 @@ async function loadAllColumns() {
 }
 
 // Génère le formulaire
-function renderForm(columns) {
+async function renderForm(columns) {
     console.log('DISP - renderForm avec', columns.length, 'colonnes');
     const formFields = document.getElementById('form-fields');
 
@@ -231,8 +232,9 @@ function renderForm(columns) {
 
     formFields.innerHTML = '';
 
-    columns.forEach((col, index) => {
-        console.log('DISP - Création champ', index + 1, ':', col.id, '(', col.label, ')');
+    for (let i = 0; i < columns.length; i++) {
+        const col = columns[i];
+        console.log('DISP - Création champ', i + 1, ':', col.id, '(', col.label, ')');
 
         const formGroup = document.createElement('div');
         formGroup.className = 'form-group';
@@ -241,23 +243,91 @@ function renderForm(columns) {
         label.setAttribute('for', col.id);
         label.textContent = col.label;
 
-        const input = createInputForType(col);
+        const input = await createInputForType(col);
         input.id = col.id;
         input.name = col.id;
 
         formGroup.appendChild(label);
         formGroup.appendChild(input);
         formFields.appendChild(formGroup);
-    });
+    }
 
     console.log('DISP - Formulaire rendu:', formFields.children.length, 'champs');
 }
 
 // Crée le bon type d'input selon le type de colonne
-function createInputForType(column) {
+async function createInputForType(column) {
     const type = column.type || 'Text';
     let input;
 
+    console.log('DISP - createInputForType pour', column.id, 'type:', type);
+
+    // Gestion des colonnes de référence (Ref:TableName)
+    if (type.startsWith('Ref:')) {
+        const refTableName = type.substring(4); // Extrait le nom de la table après "Ref:"
+        console.log('DISP - Colonne de référence détectée, table:', refTableName);
+
+        input = document.createElement('select');
+
+        // Option vide par défaut
+        const emptyOption = document.createElement('option');
+        emptyOption.value = '';
+        emptyOption.textContent = '-- Sélectionner --';
+        input.appendChild(emptyOption);
+
+        // Charge les données de la table référencée
+        try {
+            let refData;
+            if (referenceTables[refTableName]) {
+                console.log('DISP - Utilisation du cache pour', refTableName);
+                refData = referenceTables[refTableName];
+            } else {
+                console.log('DISP - Chargement des données de', refTableName);
+                refData = await grist.docApi.fetchTable(refTableName);
+                referenceTables[refTableName] = refData;
+                console.log('DISP - Données chargées:', Object.keys(refData));
+            }
+
+            // Trouve la colonne à afficher (cherche 'Nom', 'Name', 'Libelle', ou prend la première colonne non-id)
+            let displayColumn = null;
+            const columnNames = Object.keys(refData);
+            console.log('DISP - Colonnes disponibles dans', refTableName, ':', columnNames);
+
+            for (const possibleName of ['Nom', 'Name', 'Libelle', 'Label', 'Titre', 'Title']) {
+                if (columnNames.includes(possibleName)) {
+                    displayColumn = possibleName;
+                    break;
+                }
+            }
+
+            // Si aucune colonne standard trouvée, prend la première colonne non-id
+            if (!displayColumn) {
+                displayColumn = columnNames.find(col => col !== 'id' && !col.startsWith('gristHelper_'));
+            }
+
+            console.log('DISP - Colonne d\'affichage choisie:', displayColumn);
+
+            if (displayColumn && refData.id && refData[displayColumn]) {
+                // Crée les options du select
+                for (let i = 0; i < refData.id.length; i++) {
+                    const option = document.createElement('option');
+                    option.value = refData.id[i];
+                    option.textContent = refData[displayColumn][i] || `ID: ${refData.id[i]}`;
+                    input.appendChild(option);
+                }
+                console.log('DISP - Nombre d\'options créées:', refData.id.length);
+            } else {
+                console.log('DISP - ATTENTION: Impossible de créer les options');
+            }
+        } catch (error) {
+            console.error('DISP - Erreur lors du chargement de la table de référence:', error);
+            // Garde le select avec juste l'option vide
+        }
+
+        return input;
+    }
+
+    // Types standards
     if (type === 'Bool') {
         input = document.createElement('input');
         input.type = 'checkbox';
@@ -306,6 +376,7 @@ document.getElementById('grist-form').addEventListener('submit', async (e) => {
         // Parcourt tous les champs du formulaire
         for (let i = 0; i < columnsList.length; i++) {
             const colId = String(columnsList[i].id);
+            const colType = columnsList[i].type;
             const input = document.getElementById(colId);
 
             if (!input) {
@@ -313,7 +384,7 @@ document.getElementById('grist-form').addEventListener('submit', async (e) => {
                 continue;
             }
 
-            console.log('DISP - Traitement champ:', colId, 'type:', input.type, 'value:', input.value);
+            console.log('DISP - Traitement champ:', colId, 'type colonne:', colType, 'type input:', input.type, 'value:', input.value);
 
             let value;
 
@@ -328,6 +399,10 @@ document.getElementById('grist-form').addEventListener('submit', async (e) => {
                 } else {
                     value = null;
                 }
+            } else if (input.tagName === 'SELECT' && colType && colType.startsWith('Ref:')) {
+                // Pour les colonnes de référence, envoie l'ID sélectionné (déjà un nombre)
+                value = input.value !== '' ? Number(input.value) : null;
+                console.log('DISP - Colonne de référence, ID sélectionné:', value);
             } else {
                 value = String(input.value || '');
             }
