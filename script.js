@@ -2,8 +2,9 @@ let tableId = null;
 let columnsList = [];
 let referenceTables = {}; // Cache pour les données des tables référencées
 let isRendering = false; // Flag pour éviter les rendus simultanés
+let customLabels = {}; // Labels personnalisés
 
-console.log('DISP - Démarrage du script');
+console.log('DISP - Démarrage du script v43');
 
 // Classe pour récupérer les types de colonnes (inspirée du widget calendar officiel)
 class ColTypesFetcher {
@@ -117,6 +118,18 @@ async function loadFromMappings(mappings) {
 
         console.log('DISP - TableId final (type):', typeof tableId, tableId);
 
+        // Récupère les labels personnalisés depuis les options
+        try {
+            const options = await grist.widgetApi.getOptions();
+            console.log('DISP - Options récupérées:', options);
+            if (options && options.customLabels) {
+                customLabels = JSON.parse(options.customLabels);
+                console.log('DISP - Labels personnalisés chargés:', customLabels);
+            }
+        } catch (e) {
+            console.log('DISP - Pas de labels personnalisés:', e);
+        }
+
         // Précharge les types de colonnes
         await colTypesFetcher.fetchTypes();
 
@@ -143,9 +156,12 @@ async function loadFromMappings(mappings) {
 
         // Construit la liste des colonnes avec leurs métadonnées
         columnsList = mappedColumns.map(colName => {
+            const baseLabel = colTypesFetcher.getLabel(colName);
+            const finalLabel = customLabels[colName] || baseLabel;
+
             return {
                 id: colName,
-                label: colTypesFetcher.getLabel(colName),
+                label: finalLabel,
                 type: colTypesFetcher.getType(colName)
             };
         });
@@ -485,5 +501,91 @@ function hideMessage() {
     messageDiv.style.display = 'none';
     messageDiv.className = 'message';
 }
+
+// Gestion du bouton d'édition des libellés
+document.getElementById('edit-labels-btn').addEventListener('click', () => {
+    console.log('DISP - Affichage éditeur de libellés');
+
+    if (columnsList.length === 0) {
+        showMessage('Aucune colonne configurée', 'error');
+        return;
+    }
+
+    const editor = document.getElementById('labels-editor');
+    const labelsList = document.getElementById('labels-list');
+
+    // Génère la liste des champs à éditer
+    labelsList.innerHTML = '';
+    columnsList.forEach(col => {
+        const item = document.createElement('div');
+        item.className = 'label-edit-item';
+
+        const label = document.createElement('label');
+        label.textContent = col.id;
+
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.value = col.label;
+        input.id = `edit-label-${col.id}`;
+
+        item.appendChild(label);
+        item.appendChild(input);
+        labelsList.appendChild(item);
+    });
+
+    editor.style.display = 'block';
+    document.getElementById('grist-form').style.display = 'none';
+});
+
+// Annuler l'édition des libellés
+document.getElementById('cancel-labels-btn').addEventListener('click', () => {
+    console.log('DISP - Annulation édition libellés');
+    document.getElementById('labels-editor').style.display = 'none';
+    document.getElementById('grist-form').style.display = 'block';
+});
+
+// Sauvegarder les libellés
+document.getElementById('save-labels-btn').addEventListener('click', async () => {
+    console.log('DISP - Sauvegarde des libellés');
+
+    try {
+        const newLabels = {};
+
+        columnsList.forEach(col => {
+            const input = document.getElementById(`edit-label-${col.id}`);
+            if (input && input.value) {
+                newLabels[col.id] = input.value;
+            }
+        });
+
+        console.log('DISP - Nouveaux libellés:', newLabels);
+        customLabels = newLabels;
+
+        // Sauvegarde dans les options du widget
+        await grist.widgetApi.setOptions({
+            customLabels: JSON.stringify(newLabels)
+        });
+
+        console.log('DISP - Libellés sauvegardés dans les options');
+
+        // Met à jour columnsList avec les nouveaux labels
+        columnsList = columnsList.map(col => ({
+            ...col,
+            label: newLabels[col.id] || col.label
+        }));
+
+        // Recharge le formulaire
+        await renderForm(columnsList);
+
+        document.getElementById('labels-editor').style.display = 'none';
+        document.getElementById('grist-form').style.display = 'block';
+
+        showMessage('Libellés mis à jour avec succès', 'success');
+        setTimeout(() => hideMessage(), 3000);
+    } catch (error) {
+        console.error('DISP - Erreur sauvegarde libellés:', error);
+        showMessage('Erreur lors de la sauvegarde: ' + error.message, 'error');
+    }
+});
 
 console.log('DISP - Script chargé');
