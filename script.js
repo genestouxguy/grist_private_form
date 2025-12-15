@@ -58,8 +58,8 @@ grist.ready({
         name: 'Colonnes',
         title: 'Colonnes à afficher dans le formulaire',
         optional: true,
-        type: 'Text',
         allowMultiple: true
+        // Pas de 'type' spécifié = accepte tous les types
     }]
 });
 
