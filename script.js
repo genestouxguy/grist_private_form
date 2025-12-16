@@ -3,8 +3,9 @@ let columnsList = [];
 let referenceTables = {}; // Cache pour les données des tables référencées
 let isRendering = false; // Flag pour éviter les rendus simultanés
 let customLabels = {}; // Labels personnalisés
+let userAccess = null; // Niveau d'accès de l'utilisateur
 
-console.log('DISP - Démarrage du script v43');
+console.log('DISP - Démarrage du script');
 
 // Classe pour récupérer les types de colonnes (inspirée du widget calendar officiel)
 class ColTypesFetcher {
@@ -53,6 +54,41 @@ class ColTypesFetcher {
 
 const colTypesFetcher = new ColTypesFetcher();
 
+// Vérifie le niveau d'accès de l'utilisateur
+async function checkUserAccess() {
+    console.log('DISP - Vérification du niveau d\'accès utilisateur');
+
+    try {
+        const access = await grist.docApi.getAccessToken();
+        console.log('DISP - Access token:', access);
+
+        // Essaie de récupérer les infos utilisateur via une requête
+        const user = await grist.getUser();
+        console.log('DISP - User info:', user);
+
+        // Détermine le niveau d'accès
+        // Les viewers ne peuvent généralement pas modifier les options du widget
+        userAccess = user.Access || 'viewers';
+        console.log('DISP - Niveau d\'accès détecté:', userAccess);
+
+        // Masque le bouton d'édition pour les viewers
+        const editButton = document.getElementById('edit-labels-btn');
+        if (editButton) {
+            if (userAccess === 'viewers' || userAccess === 'readers') {
+                editButton.style.display = 'none';
+                console.log('DISP - Bouton d\'édition masqué pour viewer/reader');
+            } else {
+                editButton.style.display = 'inline-block';
+                console.log('DISP - Bouton d\'édition visible pour éditeur/propriétaire');
+            }
+        }
+    } catch (error) {
+        console.log('DISP - Impossible de déterminer le niveau d\'accès:', error);
+        // Par défaut, on affiche le bouton (l'utilisateur aura une erreur s'il essaie de sauvegarder)
+        userAccess = 'unknown';
+    }
+}
+
 // Initialisation du widget avec demande de configuration
 grist.ready({
     requiredAccess: 'full',
@@ -77,6 +113,9 @@ grist.onRecords(async (records, mappings) => {
         console.log('DISP - Rendu déjà en cours, ignoré');
         return;
     }
+
+    // Récupère le niveau d'accès de l'utilisateur
+    await checkUserAccess();
 
     if (mappings) {
         await loadFromMappings(mappings);
@@ -506,6 +545,13 @@ function hideMessage() {
 document.getElementById('edit-labels-btn').addEventListener('click', () => {
     console.log('DISP - Affichage éditeur de libellés');
 
+    // Vérification supplémentaire du niveau d'accès
+    if (userAccess === 'viewers' || userAccess === 'readers') {
+        showMessage('Vous n\'avez pas les permissions pour éditer les libellés', 'error');
+        setTimeout(() => hideMessage(), 3000);
+        return;
+    }
+
     if (columnsList.length === 0) {
         showMessage('Aucune colonne configurée', 'error');
         return;
@@ -547,6 +593,13 @@ document.getElementById('cancel-labels-btn').addEventListener('click', () => {
 // Sauvegarder les libellés
 document.getElementById('save-labels-btn').addEventListener('click', async () => {
     console.log('DISP - Sauvegarde des libellés');
+
+    // Vérification du niveau d'accès
+    if (userAccess === 'viewers' || userAccess === 'readers') {
+        showMessage('Vous n\'avez pas les permissions pour sauvegarder', 'error');
+        setTimeout(() => hideMessage(), 3000);
+        return;
+    }
 
     try {
         const newLabels = {};
