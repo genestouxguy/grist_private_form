@@ -5,7 +5,9 @@ let isRendering = false; // Flag pour éviter les rendus simultanés
 let customLabels = {}; // Labels personnalisés
 let userAccess = null; // Niveau d'accès de l'utilisateur
 
-console.log('DISP - Démarrage du script');
+let version = 50;
+
+console.log('DISP - Démarrage du script version ', version);
 
 // Classe pour récupérer les types de colonnes (inspirée du widget calendar officiel)
 class ColTypesFetcher {
@@ -159,14 +161,26 @@ async function loadFromMappings(mappings) {
 
         // Récupère les labels personnalisés depuis les options
         try {
+            console.log('DISP - Tentative de récupération des options du widget');
             const options = await grist.widgetApi.getOptions();
             console.log('DISP - Options récupérées:', options);
+
             if (options && options.customLabels) {
-                customLabels = JSON.parse(options.customLabels);
-                console.log('DISP - Labels personnalisés chargés:', customLabels);
+                try {
+                    customLabels = JSON.parse(options.customLabels);
+                    console.log('DISP - Labels personnalisés chargés:', customLabels);
+                } catch (parseError) {
+                    console.log('DISP - Erreur parsing customLabels:', parseError);
+                    customLabels = {};
+                }
+            } else {
+                console.log('DISP - Pas de customLabels dans les options');
+                customLabels = {};
             }
         } catch (e) {
-            console.log('DISP - Pas de labels personnalisés:', e);
+            console.log('DISP - Erreur lors de la récupération des options:', e);
+            console.log('DISP - Type d\'erreur:', e.name, e.message);
+            customLabels = {};
         }
 
         // Précharge les types de colonnes
@@ -614,12 +628,35 @@ document.getElementById('save-labels-btn').addEventListener('click', async () =>
         console.log('DISP - Nouveaux libellés:', newLabels);
         customLabels = newLabels;
 
-        // Sauvegarde dans les options du widget
-        await grist.widgetApi.setOptions({
-            customLabels: JSON.stringify(newLabels)
-        });
+        const labelsJson = JSON.stringify(newLabels);
+        console.log('DISP - JSON à sauvegarder:', labelsJson);
 
-        console.log('DISP - Libellés sauvegardés dans les options');
+        // Sauvegarde dans les options du widget
+        try {
+            console.log('DISP - Appel de setOptions...');
+            const result = await grist.widgetApi.setOptions({
+                customLabels: labelsJson
+            });
+            console.log('DISP - Résultat setOptions:', result);
+            console.log('DISP - Libellés sauvegardés dans les options');
+        } catch (setError) {
+            console.error('DISP - Erreur setOptions:', setError);
+            console.error('DISP - Type erreur:', setError.name, setError.message);
+            throw setError;
+        }
+
+        // Vérifie que la sauvegarde a fonctionné
+        try {
+            const checkOptions = await grist.widgetApi.getOptions();
+            console.log('DISP - Vérification des options sauvegardées:', checkOptions);
+            if (checkOptions && checkOptions.customLabels) {
+                console.log('DISP - ✓ Sauvegarde confirmée');
+            } else {
+                console.log('DISP - ⚠ Les options ne semblent pas sauvegardées');
+            }
+        } catch (checkError) {
+            console.log('DISP - Impossible de vérifier la sauvegarde:', checkError);
+        }
 
         // Met à jour columnsList avec les nouveaux labels
         columnsList = columnsList.map(col => ({
@@ -637,6 +674,7 @@ document.getElementById('save-labels-btn').addEventListener('click', async () =>
         setTimeout(() => hideMessage(), 3000);
     } catch (error) {
         console.error('DISP - Erreur sauvegarde libellés:', error);
+        console.error('DISP - Stack:', error.stack);
         showMessage('Erreur lors de la sauvegarde: ' + error.message, 'error');
     }
 });
