@@ -162,21 +162,36 @@ async function loadFromMappings(mappings) {
         // Récupère les labels personnalisés depuis les options
         try {
             console.log('DISP - Tentative de récupération des options du widget');
-            const options = await grist.widgetApi.getOptions();
-            console.log('DISP - Options récupérées:', options);
 
-            if (options && options.customLabels) {
-                try {
-                    customLabels = JSON.parse(options.customLabels);
-                    console.log('DISP - Labels personnalisés chargés:', customLabels);
-                } catch (parseError) {
-                    console.log('DISP - Erreur parsing customLabels:', parseError);
-                    customLabels = {};
+            // Méthode 1: Via widgetApi
+            try {
+                const widgetOptions = await grist.widgetApi.getOptions();
+                console.log('DISP - Options widgetApi:', widgetOptions);
+
+                if (widgetOptions && widgetOptions.customLabels) {
+                    customLabels = JSON.parse(widgetOptions.customLabels);
+                    console.log('DISP - Labels depuis widgetApi:', customLabels);
                 }
-            } else {
-                console.log('DISP - Pas de customLabels dans les options');
-                customLabels = {};
+            } catch (e1) {
+                console.log('DISP - widgetApi.getOptions échoué:', e1);
             }
+
+            // Méthode 2: Via les options de la section (fallback)
+            if (Object.keys(customLabels).length === 0) {
+                try {
+                    const sectionOptions = await grist.getOption('customLabels');
+                    console.log('DISP - Options section:', sectionOptions);
+
+                    if (sectionOptions) {
+                        customLabels = JSON.parse(sectionOptions);
+                        console.log('DISP - Labels depuis section:', customLabels);
+                    }
+                } catch (e2) {
+                    console.log('DISP - getOption échoué:', e2);
+                }
+            }
+
+            console.log('DISP - Labels finaux chargés:', customLabels);
         } catch (e) {
             console.log('DISP - Erreur lors de la récupération des options:', e);
             console.log('DISP - Type d\'erreur:', e.name, e.message);
@@ -631,34 +646,68 @@ document.getElementById('save-labels-btn').addEventListener('click', async () =>
         const labelsJson = JSON.stringify(newLabels);
         console.log('DISP - JSON à sauvegarder:', labelsJson);
 
-        // Sauvegarde dans les options du widget
-        try {
-            console.log('DISP - Appel de setOptions...');
-            const result = await grist.widgetApi.setOptions({
-                customLabels: labelsJson
-            });
-            console.log('DISP - Résultat setOptions:', result);
-            console.log('DISP - Libellés sauvegardés dans les options');
-        } catch (setError) {
-            console.error('DISP - Erreur setOptions:', setError);
-            console.error('DISP - Type erreur:', setError.name, setError.message);
-            throw setError;
-        }
+        // Essaie plusieurs méthodes de sauvegarde
+        let saveSuccess = false;
 
-        // Vérifie que la sauvegarde a fonctionné
+        // Méthode 1: widgetApi.setOptions
         try {
-            const checkOptions = await grist.widgetApi.getOptions();
-            console.log('DISP - Vérification des options sauvegardées:', checkOptions);
-            if (checkOptions && checkOptions.customLabels) {
-                console.log('DISP - ✓ Sauvegarde confirmée');
-            } else {
-                console.log('DISP - ⚠ Les options ne semblent pas sauvegardées');
+            console.log('DISP - Tentative 1: widgetApi.setOptions');
+            await grist.widgetApi.setOptions({ customLabels: labelsJson });
+
+            // Vérifie immédiatement
+            const check1 = await grist.widgetApi.getOptions();
+            console.log('DISP - Vérification widgetApi:', check1);
+
+            if (check1 && check1.customLabels === labelsJson) {
+                console.log('DISP - ✓ Sauvegarde widgetApi réussie');
+                saveSuccess = true;
             }
-        } catch (checkError) {
-            console.log('DISP - Impossible de vérifier la sauvegarde:', checkError);
+        } catch (e1) {
+            console.log('DISP - widgetApi.setOptions échoué:', e1);
         }
 
-        // Met à jour columnsList avec les nouveaux labels
+        // Méthode 2: setOption (section)
+        if (!saveSuccess) {
+            try {
+                console.log('DISP - Tentative 2: setOption (section)');
+                await grist.setOption('customLabels', labelsJson);
+
+                // Vérifie
+                const check2 = await grist.getOption('customLabels');
+                console.log('DISP - Vérification section:', check2);
+
+                if (check2 === labelsJson) {
+                    console.log('DISP - ✓ Sauvegarde section réussie');
+                    saveSuccess = true;
+                }
+            } catch (e2) {
+                console.log('DISP - setOption échoué:', e2);
+            }
+        }
+
+        // Méthode 3: Sauvegarde dans les métadonnées de la vue
+        if (!saveSuccess) {
+            try {
+                console.log('DISP - Tentative 3: Via docApi (métadonnées)');
+                // Tente de sauvegarder dans les options de la section via docApi
+                await grist.docApi.applyUserActions([
+                    ['UpdateRecord', '_grist_Views_section', grist.sectionId, {
+                        options: JSON.stringify({ customLabels: newLabels })
+                    }]
+                ]);
+                console.log('DISP - ✓ Sauvegarde via docApi tentée');
+                saveSuccess = true;
+            } catch (e3) {
+                console.log('DISP - docApi échoué:', e3);
+            }
+        }
+
+        if (!saveSuccess) {
+            console.log('DISP - ⚠ Aucune méthode de sauvegarde n\'a fonctionné');
+            showMessage('Les libellés sont appliqués mais ne seront pas sauvegardés après rechargement', 'error');
+        }
+
+        // Met à jour columnsList avec les nouveaux labels (en mémoire)
         columnsList = columnsList.map(col => ({
             ...col,
             label: newLabels[col.id] || col.label
@@ -670,7 +719,11 @@ document.getElementById('save-labels-btn').addEventListener('click', async () =>
         document.getElementById('labels-editor').style.display = 'none';
         document.getElementById('grist-form').style.display = 'block';
 
-        showMessage('Libellés mis à jour avec succès', 'success');
+        if (saveSuccess) {
+            showMessage('Libellés mis à jour et sauvegardés', 'success');
+        } else {
+            showMessage('Libellés mis à jour (session uniquement)', 'success');
+        }
         setTimeout(() => hideMessage(), 3000);
     } catch (error) {
         console.error('DISP - Erreur sauvegarde libellés:', error);
