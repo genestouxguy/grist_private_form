@@ -5,7 +5,7 @@ let isRendering = false; // Flag pour éviter les rendus simultanés
 let customLabels = {}; // Labels personnalisés
 let userAccess = null; // Niveau d'accès de l'utilisateur
 
-let version = 50;
+let version = 61;
 
 console.log('DISP - Démarrage du script version ', version);
 
@@ -172,6 +172,11 @@ async function loadFromMappings(mappings) {
                     customLabels = JSON.parse(widgetOptions.customLabels);
                     console.log('DISP - Labels depuis widgetApi:', customLabels);
                 }
+
+                if (widgetOptions && widgetOptions.customLayouts) {
+                    customLayouts = JSON.parse(widgetOptions.customLayouts);
+                    console.log('DISP - Layouts depuis widgetApi:', customLayouts);
+                }
             } catch (e1) {
                 console.log('DISP - widgetApi.getOptions échoué:', e1);
             }
@@ -186,12 +191,19 @@ async function loadFromMappings(mappings) {
                         customLabels = JSON.parse(sectionOptions);
                         console.log('DISP - Labels depuis section:', customLabels);
                     }
+
+                    const layoutOptions = await grist.getOption('customLayouts');
+                    if (layoutOptions) {
+                        customLayouts = JSON.parse(layoutOptions);
+                        console.log('DISP - Layouts depuis section:', customLayouts);
+                    }
                 } catch (e2) {
                     console.log('DISP - getOption échoué:', e2);
                 }
             }
 
             console.log('DISP - Labels finaux chargés:', customLabels);
+            console.log('DISP - Layouts finaux chargés:', customLayouts);
         } catch (e) {
             console.log('DISP - Erreur lors de la récupération des options:', e);
             console.log('DISP - Type d\'erreur:', e.name, e.message);
@@ -226,11 +238,13 @@ async function loadFromMappings(mappings) {
         columnsList = mappedColumns.map(colName => {
             const baseLabel = colTypesFetcher.getLabel(colName);
             const finalLabel = customLabels[colName] || baseLabel;
+            const colWidth = customLayouts[colName] || 12; // Par défaut: pleine largeur
 
             return {
                 id: colName,
                 label: finalLabel,
-                type: colTypesFetcher.getType(colName)
+                type: colTypesFetcher.getType(colName),
+                width: colWidth
             };
         });
 
@@ -291,10 +305,13 @@ async function loadAllColumns() {
 
         // Construit la liste des colonnes avec leurs métadonnées
         columnsList = columnNames.map(colName => {
+            const colWidth = customLayouts[colName] || 12; // Par défaut: pleine largeur
+
             return {
                 id: colName,
                 label: colTypesFetcher.getLabel(colName),
-                type: colTypesFetcher.getType(colName)
+                type: colTypesFetcher.getType(colName),
+                width: colWidth
             };
         });
 
@@ -335,10 +352,10 @@ async function renderForm(columns) {
 
         for (let i = 0; i < columns.length; i++) {
             const col = columns[i];
-            console.log('DISP - Création champ', i + 1, '/', columns.length, ':', col.id, '(', col.label, ') type:', col.type);
+            console.log('DISP - Création champ', i + 1, '/', columns.length, ':', col.id, '(', col.label, ') type:', col.type, 'width:', col.width);
 
             const formGroup = document.createElement('div');
-            formGroup.className = 'form-group';
+            formGroup.className = `form-group col-${col.width || 12}`;
 
             const label = document.createElement('label');
             label.setAttribute('for', col.id);
@@ -598,13 +615,48 @@ document.getElementById('edit-labels-btn').addEventListener('click', () => {
         const label = document.createElement('label');
         label.textContent = col.id;
 
-        const input = document.createElement('input');
-        input.type = 'text';
-        input.value = col.label;
-        input.id = `edit-label-${col.id}`;
+        const controls = document.createElement('div');
+        controls.className = 'layout-controls';
+
+        // Input pour le libellé
+        const labelInput = document.createElement('input');
+        labelInput.type = 'text';
+        labelInput.value = col.label;
+        labelInput.id = `edit-label-${col.id}`;
+        labelInput.placeholder = 'Libellé';
+
+        // Select pour la largeur
+        const widthLabel = document.createElement('label');
+        widthLabel.textContent = 'Largeur:';
+
+        const widthSelect = document.createElement('select');
+        widthSelect.id = `edit-width-${col.id}`;
+
+        const widthOptions = [
+            { value: 12, label: 'Pleine (12/12)' },
+            { value: 6, label: 'Moitié (6/12)' },
+            { value: 4, label: 'Tiers (4/12)' },
+            { value: 3, label: 'Quart (3/12)' },
+            { value: 8, label: 'Deux tiers (8/12)' },
+            { value: 9, label: 'Trois quarts (9/12)' }
+        ];
+
+        widthOptions.forEach(opt => {
+            const option = document.createElement('option');
+            option.value = opt.value;
+            option.textContent = opt.label;
+            if (col.width == opt.value) {
+                option.selected = true;
+            }
+            widthSelect.appendChild(option);
+        });
+
+        controls.appendChild(labelInput);
+        controls.appendChild(widthLabel);
+        controls.appendChild(widthSelect);
 
         item.appendChild(label);
-        item.appendChild(input);
+        item.appendChild(controls);
         labelsList.appendChild(item);
     });
 
@@ -632,19 +684,29 @@ document.getElementById('save-labels-btn').addEventListener('click', async () =>
 
     try {
         const newLabels = {};
+        const newLayouts = {};
 
         columnsList.forEach(col => {
-            const input = document.getElementById(`edit-label-${col.id}`);
-            if (input && input.value) {
-                newLabels[col.id] = input.value;
+            const labelInput = document.getElementById(`edit-label-${col.id}`);
+            if (labelInput && labelInput.value) {
+                newLabels[col.id] = labelInput.value;
+            }
+
+            const widthSelect = document.getElementById(`edit-width-${col.id}`);
+            if (widthSelect && widthSelect.value) {
+                newLayouts[col.id] = parseInt(widthSelect.value);
             }
         });
 
         console.log('DISP - Nouveaux libellés:', newLabels);
+        console.log('DISP - Nouvelles dispositions:', newLayouts);
+
         customLabels = newLabels;
+        customLayouts = newLayouts;
 
         const labelsJson = JSON.stringify(newLabels);
-        console.log('DISP - JSON à sauvegarder:', labelsJson);
+        const layoutsJson = JSON.stringify(newLayouts);
+        console.log('DISP - JSON à sauvegarder:', { labelsJson, layoutsJson });
 
         // Essaie plusieurs méthodes de sauvegarde
         let saveSuccess = false;
@@ -652,13 +714,16 @@ document.getElementById('save-labels-btn').addEventListener('click', async () =>
         // Méthode 1: widgetApi.setOptions
         try {
             console.log('DISP - Tentative 1: widgetApi.setOptions');
-            await grist.widgetApi.setOptions({ customLabels: labelsJson });
+            await grist.widgetApi.setOptions({
+                customLabels: labelsJson,
+                customLayouts: layoutsJson
+            });
 
             // Vérifie immédiatement
             const check1 = await grist.widgetApi.getOptions();
             console.log('DISP - Vérification widgetApi:', check1);
 
-            if (check1 && check1.customLabels === labelsJson) {
+            if (check1 && check1.customLabels === labelsJson && check1.customLayouts === layoutsJson) {
                 console.log('DISP - ✓ Sauvegarde widgetApi réussie');
                 saveSuccess = true;
             }
@@ -671,12 +736,14 @@ document.getElementById('save-labels-btn').addEventListener('click', async () =>
             try {
                 console.log('DISP - Tentative 2: setOption (section)');
                 await grist.setOption('customLabels', labelsJson);
+                await grist.setOption('customLayouts', layoutsJson);
 
                 // Vérifie
                 const check2 = await grist.getOption('customLabels');
-                console.log('DISP - Vérification section:', check2);
+                const check3 = await grist.getOption('customLayouts');
+                console.log('DISP - Vérification section:', { check2, check3 });
 
-                if (check2 === labelsJson) {
+                if (check2 === labelsJson && check3 === layoutsJson) {
                     console.log('DISP - ✓ Sauvegarde section réussie');
                     saveSuccess = true;
                 }
@@ -710,7 +777,8 @@ document.getElementById('save-labels-btn').addEventListener('click', async () =>
         // Met à jour columnsList avec les nouveaux labels (en mémoire)
         columnsList = columnsList.map(col => ({
             ...col,
-            label: newLabels[col.id] || col.label
+            label: newLabels[col.id] || col.label,
+            width: newLayouts[col.id] || col.width || 12
         }));
 
         // Recharge le formulaire

@@ -33,8 +33,8 @@ h1 {
 }
 
 #form-fields {
-    display: flex;
-    flex-direction: column;
+    display: grid;
+    grid-template-columns: repeat(12, 1fr);
     gap: 18px;
 }
 
@@ -42,6 +42,82 @@ h1 {
     display: flex;
     flex-direction: column;
     gap: 6px;
+}
+
+/* Classes de largeur pour la grille (1 à 12 colonnes) */
+.col-1 {
+    grid-column: span 1;
+}
+
+.col-2 {
+    grid-column: span 2;
+}
+
+.col-3 {
+    grid-column: span 3;
+}
+
+.col-4 {
+    grid-column: span 4;
+}
+
+.col-5 {
+    grid-column: span 5;
+}
+
+.col-6 {
+    grid-column: span 6;
+}
+
+.col-7 {
+    grid-column: span 7;
+}
+
+.col-8 {
+    grid-column: span 8;
+}
+
+.col-9 {
+    grid-column: span 9;
+}
+
+.col-10 {
+    grid-column: span 10;
+}
+
+.col-11 {
+    grid-column: span 11;
+}
+
+.col-12 {
+    grid-column: span 12;
+}
+
+/* Responsive : sur petits écrans, tous les champs prennent toute la largeur */
+@media (max-width: 768px) {
+    #form-fields {
+        grid-template-columns: 1fr;
+    }
+
+    .form-group {
+        grid-column: span 1 !important;
+    }
+}
+
+/* Responsive : sur écrans moyens, limité à 6 colonnes */
+@media (min-width: 769px) and (max-width: 1024px) {
+    #form-fields {
+        grid-template-columns: repeat(6, 1fr);
+    }
+
+    .col-7,
+    .col-8,
+    .col-9,
+    .col-10,
+    .col-11,
+    .col-12 {
+        grid-column: span 6 !important;
+    }
 }
 
 .form-group label {
@@ -177,12 +253,30 @@ h1 {
     color: #555;
 }
 
-.label-edit-item input {
+.label-edit-item input,
+.label-edit-item select {
     flex: 1;
     padding: 8px 12px;
     border: 1px solid #ddd;
     border-radius: 4px;
     font-size: 14px;
+}
+
+.layout-controls {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.layout-controls label {
+    flex: 0 0 auto !important;
+    margin: 0 !important;
+    font-size: 13px;
+}
+
+.layout-controls select {
+    flex: 0 0 120px !important;
+    padding: 6px 10px;
 }
 
 @media (max-width: 600px) {
@@ -205,5 +299,14 @@ h1 {
 
     .label-edit-item label {
         flex: none;
+    }
+
+    .layout-controls {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .layout-controls select {
+        flex: 1 1 auto !important;
     }
 }
