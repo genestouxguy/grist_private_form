@@ -3,6 +3,7 @@ let columnsList = [];
 let referenceTables = {}; // Cache pour les données des tables référencées
 let isRendering = false; // Flag pour éviter les rendus simultanés
 let customLabels = {}; // Labels personnalisés
+let customLayouts = {}; // Disposition personnalisée (largeur de chaque champ)
 let userAccess = null; // Niveau d'accès de l'utilisateur
 
 let version = 61;
