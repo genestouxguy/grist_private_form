@@ -4,11 +4,13 @@ let referenceTables = {}; // Cache pour les données des tables référencées
 let isRendering = false; // Flag pour éviter les rendus simultanés
 let customLabels = {}; // Labels personnalisés
 let customLayouts = {}; // Disposition personnalisée (largeur de chaque champ)
+let customOrder = []; // Ordre personnalisé des champs
 let userAccess = null; // Niveau d'accès de l'utilisateur
 
-let version = 61;
+let version = 70;
 
 console.log('DISP - Démarrage du script version ', version);
+
 
 // Classe pour récupérer les types de colonnes (inspirée du widget calendar officiel)
 class ColTypesFetcher {
@@ -178,6 +180,11 @@ async function loadFromMappings(mappings) {
                     customLayouts = JSON.parse(widgetOptions.customLayouts);
                     console.log('DISP - Layouts depuis widgetApi:', customLayouts);
                 }
+
+                if (widgetOptions && widgetOptions.customOrder) {
+                    customOrder = JSON.parse(widgetOptions.customOrder);
+                    console.log('DISP - Order depuis widgetApi:', customOrder);
+                }
             } catch (e1) {
                 console.log('DISP - widgetApi.getOptions échoué:', e1);
             }
@@ -198,6 +205,12 @@ async function loadFromMappings(mappings) {
                         customLayouts = JSON.parse(layoutOptions);
                         console.log('DISP - Layouts depuis section:', customLayouts);
                     }
+
+                    const orderOptions = await grist.getOption('customOrder');
+                    if (orderOptions) {
+                        customOrder = JSON.parse(orderOptions);
+                        console.log('DISP - Order depuis section:', customOrder);
+                    }
                 } catch (e2) {
                     console.log('DISP - getOption échoué:', e2);
                 }
@@ -205,6 +218,7 @@ async function loadFromMappings(mappings) {
 
             console.log('DISP - Labels finaux chargés:', customLabels);
             console.log('DISP - Layouts finaux chargés:', customLayouts);
+            console.log('DISP - Order final chargé:', customOrder);
         } catch (e) {
             console.log('DISP - Erreur lors de la récupération des options:', e);
             console.log('DISP - Type d\'erreur:', e.name, e.message);
@@ -248,6 +262,30 @@ async function loadFromMappings(mappings) {
                 width: colWidth
             };
         });
+
+        // Applique l'ordre personnalisé si disponible
+        if (customOrder && customOrder.length > 0) {
+            console.log('DISP - Application de l\'ordre personnalisé');
+            const orderedList = [];
+
+            // Ajoute d'abord les colonnes dans l'ordre personnalisé
+            customOrder.forEach(colId => {
+                const col = columnsList.find(c => c.id === colId);
+                if (col) {
+                    orderedList.push(col);
+                }
+            });
+
+            // Ajoute les nouvelles colonnes qui ne sont pas dans l'ordre personnalisé
+            columnsList.forEach(col => {
+                if (!customOrder.includes(col.id)) {
+                    orderedList.push(col);
+                }
+            });
+
+            columnsList = orderedList;
+            console.log('DISP - Ordre appliqué:', columnsList.map(c => c.id));
+        }
 
         console.log('DISP - Liste finale des colonnes:', columnsList);
 
@@ -609,9 +647,18 @@ document.getElementById('edit-labels-btn').addEventListener('click', () => {
 
     // Génère la liste des champs à éditer
     labelsList.innerHTML = '';
-    columnsList.forEach(col => {
+    columnsList.forEach((col, index) => {
         const item = document.createElement('div');
         item.className = 'label-edit-item';
+        item.draggable = true;
+        item.dataset.colId = col.id;
+        item.dataset.index = index;
+
+        // Handle de drag
+        const dragHandle = document.createElement('span');
+        dragHandle.className = 'drag-handle';
+        dragHandle.innerHTML = '⋮⋮';
+        dragHandle.title = 'Glisser pour réorganiser';
 
         const label = document.createElement('label');
         label.textContent = col.id;
@@ -656,14 +703,89 @@ document.getElementById('edit-labels-btn').addEventListener('click', () => {
         controls.appendChild(widthLabel);
         controls.appendChild(widthSelect);
 
+        item.appendChild(dragHandle);
         item.appendChild(label);
         item.appendChild(controls);
         labelsList.appendChild(item);
+
+        // Events de drag & drop
+        item.addEventListener('dragstart', handleDragStart);
+        item.addEventListener('dragover', handleDragOver);
+        item.addEventListener('drop', handleDrop);
+        item.addEventListener('dragend', handleDragEnd);
     });
 
     editor.style.display = 'block';
     document.getElementById('grist-form').style.display = 'none';
 });
+
+// Variables pour le drag & drop
+let draggedItem = null;
+
+function handleDragStart(e) {
+    draggedItem = this;
+    this.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/html', this.innerHTML);
+    console.log('DISP - Début du drag:', this.dataset.colId);
+}
+
+function handleDragOver(e) {
+    if (e.preventDefault) {
+        e.preventDefault();
+    }
+    e.dataTransfer.dropEffect = 'move';
+
+    if (this !== draggedItem) {
+        this.classList.add('drag-over');
+    }
+
+    return false;
+}
+
+function handleDrop(e) {
+    if (e.stopPropagation) {
+        e.stopPropagation();
+    }
+
+    if (draggedItem !== this) {
+        const allItems = Array.from(document.querySelectorAll('.label-edit-item'));
+        const draggedIndex = allItems.indexOf(draggedItem);
+        const targetIndex = allItems.indexOf(this);
+
+        console.log('DISP - Drop:', draggedItem.dataset.colId, 'à la position de', this.dataset.colId);
+
+        // Réorganise les éléments dans le DOM
+        if (draggedIndex < targetIndex) {
+            this.parentNode.insertBefore(draggedItem, this.nextSibling);
+        } else {
+            this.parentNode.insertBefore(draggedItem, this);
+        }
+
+        // Met à jour les index
+        updateItemsOrder();
+    }
+
+    this.classList.remove('drag-over');
+    return false;
+}
+
+function handleDragEnd(e) {
+    this.classList.remove('dragging');
+
+    // Enlève tous les drag-over
+    document.querySelectorAll('.label-edit-item').forEach(item => {
+        item.classList.remove('drag-over');
+    });
+}
+
+function updateItemsOrder() {
+    const allItems = Array.from(document.querySelectorAll('.label-edit-item'));
+    allItems.forEach((item, index) => {
+        item.dataset.index = index;
+    });
+    console.log('DISP - Nouvel ordre:', allItems.map(i => i.dataset.colId));
+}
 
 // Annuler l'édition des libellés
 document.getElementById('cancel-labels-btn').addEventListener('click', () => {
@@ -686,28 +808,38 @@ document.getElementById('save-labels-btn').addEventListener('click', async () =>
     try {
         const newLabels = {};
         const newLayouts = {};
+        const newOrder = [];
 
-        columnsList.forEach(col => {
-            const labelInput = document.getElementById(`edit-label-${col.id}`);
+        // Récupère l'ordre actuel depuis le DOM
+        const allItems = Array.from(document.querySelectorAll('.label-edit-item'));
+
+        allItems.forEach(item => {
+            const colId = item.dataset.colId;
+            newOrder.push(colId);
+
+            const labelInput = document.getElementById(`edit-label-${colId}`);
             if (labelInput && labelInput.value) {
-                newLabels[col.id] = labelInput.value;
+                newLabels[colId] = labelInput.value;
             }
 
-            const widthSelect = document.getElementById(`edit-width-${col.id}`);
+            const widthSelect = document.getElementById(`edit-width-${colId}`);
             if (widthSelect && widthSelect.value) {
-                newLayouts[col.id] = parseInt(widthSelect.value);
+                newLayouts[colId] = parseInt(widthSelect.value);
             }
         });
 
         console.log('DISP - Nouveaux libellés:', newLabels);
         console.log('DISP - Nouvelles dispositions:', newLayouts);
+        console.log('DISP - Nouvel ordre:', newOrder);
 
         customLabels = newLabels;
         customLayouts = newLayouts;
+        customOrder = newOrder;
 
         const labelsJson = JSON.stringify(newLabels);
         const layoutsJson = JSON.stringify(newLayouts);
-        console.log('DISP - JSON à sauvegarder:', { labelsJson, layoutsJson });
+        const orderJson = JSON.stringify(newOrder);
+        console.log('DISP - JSON à sauvegarder:', { labelsJson, layoutsJson, orderJson });
 
         // Essaie plusieurs méthodes de sauvegarde
         let saveSuccess = false;
@@ -717,14 +849,15 @@ document.getElementById('save-labels-btn').addEventListener('click', async () =>
             console.log('DISP - Tentative 1: widgetApi.setOptions');
             await grist.widgetApi.setOptions({
                 customLabels: labelsJson,
-                customLayouts: layoutsJson
+                customLayouts: layoutsJson,
+                customOrder: orderJson
             });
 
             // Vérifie immédiatement
             const check1 = await grist.widgetApi.getOptions();
             console.log('DISP - Vérification widgetApi:', check1);
 
-            if (check1 && check1.customLabels === labelsJson && check1.customLayouts === layoutsJson) {
+            if (check1 && check1.customLabels === labelsJson && check1.customLayouts === layoutsJson && check1.customOrder === orderJson) {
                 console.log('DISP - ✓ Sauvegarde widgetApi réussie');
                 saveSuccess = true;
             }
@@ -738,13 +871,15 @@ document.getElementById('save-labels-btn').addEventListener('click', async () =>
                 console.log('DISP - Tentative 2: setOption (section)');
                 await grist.setOption('customLabels', labelsJson);
                 await grist.setOption('customLayouts', layoutsJson);
+                await grist.setOption('customOrder', orderJson);
 
                 // Vérifie
                 const check2 = await grist.getOption('customLabels');
                 const check3 = await grist.getOption('customLayouts');
-                console.log('DISP - Vérification section:', { check2, check3 });
+                const check4 = await grist.getOption('customOrder');
+                console.log('DISP - Vérification section:', { check2, check3, check4 });
 
-                if (check2 === labelsJson && check3 === layoutsJson) {
+                if (check2 === labelsJson && check3 === layoutsJson && check4 === orderJson) {
                     console.log('DISP - ✓ Sauvegarde section réussie');
                     saveSuccess = true;
                 }
@@ -776,11 +911,14 @@ document.getElementById('save-labels-btn').addEventListener('click', async () =>
         }
 
         // Met à jour columnsList avec les nouveaux labels (en mémoire)
-        columnsList = columnsList.map(col => ({
-            ...col,
-            label: newLabels[col.id] || col.label,
-            width: newLayouts[col.id] || col.width || 12
-        }));
+        columnsList = newOrder.map(colId => {
+            const existingCol = columnsList.find(c => c.id === colId);
+            return {
+                ...existingCol,
+                label: newLabels[colId] || existingCol.label,
+                width: newLayouts[colId] || existingCol.width || 12
+            };
+        });
 
         // Recharge le formulaire
         await renderForm(columnsList);
