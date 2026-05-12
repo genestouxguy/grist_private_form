@@ -5,12 +5,10 @@ let isRendering = false; // Flag pour éviter les rendus simultanés
 let customLabels = {}; // Labels personnalisés
 let customLayouts = {}; // Disposition personnalisée (largeur de chaque champ)
 let customOrder = []; // Ordre personnalisé des champs
+let refDisplayColumns = {}; // Colonnes d'affichage pour les références (ex: {Clients: 'Nom'})
 let userAccess = null; // Niveau d'accès de l'utilisateur
 
-let version = 70;
-
-console.log('DISP - Démarrage du script version ', version);
-
+console.log('DISP - Démarrage du script');
 
 // Classe pour récupérer les types de colonnes (inspirée du widget calendar officiel)
 class ColTypesFetcher {
@@ -102,6 +100,7 @@ grist.ready({
         title: 'Colonnes à afficher dans le formulaire',
         optional: true,
         allowMultiple: true
+        // PAS de "type" défini = accepte tous les types de colonnes
     }]
 });
 
@@ -185,6 +184,11 @@ async function loadFromMappings(mappings) {
                     customOrder = JSON.parse(widgetOptions.customOrder);
                     console.log('DISP - Order depuis widgetApi:', customOrder);
                 }
+
+                if (widgetOptions && widgetOptions.refDisplayColumns) {
+                    refDisplayColumns = JSON.parse(widgetOptions.refDisplayColumns);
+                    console.log('DISP - RefDisplayColumns depuis widgetApi:', refDisplayColumns);
+                }
             } catch (e1) {
                 console.log('DISP - widgetApi.getOptions échoué:', e1);
             }
@@ -211,6 +215,12 @@ async function loadFromMappings(mappings) {
                         customOrder = JSON.parse(orderOptions);
                         console.log('DISP - Order depuis section:', customOrder);
                     }
+
+                    const refDisplayOptions = await grist.getOption('refDisplayColumns');
+                    if (refDisplayOptions) {
+                        refDisplayColumns = JSON.parse(refDisplayOptions);
+                        console.log('DISP - RefDisplayColumns depuis section:', refDisplayColumns);
+                    }
                 } catch (e2) {
                     console.log('DISP - getOption échoué:', e2);
                 }
@@ -219,6 +229,7 @@ async function loadFromMappings(mappings) {
             console.log('DISP - Labels finaux chargés:', customLabels);
             console.log('DISP - Layouts finaux chargés:', customLayouts);
             console.log('DISP - Order final chargé:', customOrder);
+            console.log('DISP - RefDisplayColumns final chargé:', refDisplayColumns);
         } catch (e) {
             console.log('DISP - Erreur lors de la récupération des options:', e);
             console.log('DISP - Type d\'erreur:', e.name, e.message);
@@ -647,12 +658,22 @@ document.getElementById('edit-labels-btn').addEventListener('click', () => {
 
     // Génère la liste des champs à éditer
     labelsList.innerHTML = '';
+
+    // Détecte les colonnes de référence
+    const refColumns = [];
+
     columnsList.forEach((col, index) => {
         const item = document.createElement('div');
         item.className = 'label-edit-item';
         item.draggable = true;
         item.dataset.colId = col.id;
         item.dataset.index = index;
+
+        // Détecte si c'est une colonne de référence
+        if (col.type && col.type.startsWith('Ref:')) {
+            const refTableName = col.type.substring(4);
+            refColumns.push({ colId: col.id, refTable: refTableName });
+        }
 
         // Handle de drag
         const dragHandle = document.createElement('span');
@@ -714,6 +735,66 @@ document.getElementById('edit-labels-btn').addEventListener('click', () => {
         item.addEventListener('drop', handleDrop);
         item.addEventListener('dragend', handleDragEnd);
     });
+
+    // Configuration des colonnes de référence
+    if (refColumns.length > 0) {
+        console.log('DISP - Colonnes de référence détectées:', refColumns);
+        const refConfigSection = document.getElementById('ref-config-section');
+        const refConfigList = document.getElementById('ref-config-list');
+
+        refConfigSection.style.display = 'block';
+        refConfigList.innerHTML = '';
+
+        // Charge les colonnes disponibles pour chaque table référencée
+        for (const refCol of refColumns) {
+            const refItem = document.createElement('div');
+            refItem.className = 'label-edit-item';
+            refItem.style.cursor = 'default';
+
+            const refLabel = document.createElement('label');
+            refLabel.textContent = `${refCol.colId} (${refCol.refTable})`;
+            refLabel.style.flex = '0 0 200px';
+
+            const refSelect = document.createElement('select');
+            refSelect.id = `ref-display-${refCol.refTable}`;
+            refSelect.style.flex = '1';
+
+            // Option par défaut
+            const defaultOption = document.createElement('option');
+            defaultOption.value = '';
+            defaultOption.textContent = 'Automatique';
+            refSelect.appendChild(defaultOption);
+
+            // Charge les colonnes de la table référencée
+            (async () => {
+                try {
+                    const refData = await grist.docApi.fetchTable(refCol.refTable);
+                    const availableColumns = Object.keys(refData).filter(col =>
+                        col !== 'id' && !col.startsWith('gristHelper_') && !col.startsWith('manualSort')
+                    );
+
+                    availableColumns.forEach(colName => {
+                        const option = document.createElement('option');
+                        option.value = colName;
+                        option.textContent = colName;
+
+                        // Sélectionne la colonne configurée
+                        if (refDisplayColumns[refCol.refTable] === colName) {
+                            option.selected = true;
+                        }
+
+                        refSelect.appendChild(option);
+                    });
+                } catch (error) {
+                    console.error('DISP - Erreur chargement colonnes pour', refCol.refTable, error);
+                }
+            })();
+
+            refItem.appendChild(refLabel);
+            refItem.appendChild(refSelect);
+            refConfigList.appendChild(refItem);
+        }
+    }
 
     editor.style.display = 'block';
     document.getElementById('grist-form').style.display = 'none';
@@ -809,37 +890,52 @@ document.getElementById('save-labels-btn').addEventListener('click', async () =>
         const newLabels = {};
         const newLayouts = {};
         const newOrder = [];
+        const newRefDisplayColumns = {};
 
         // Récupère l'ordre actuel depuis le DOM
         const allItems = Array.from(document.querySelectorAll('.label-edit-item'));
 
         allItems.forEach(item => {
             const colId = item.dataset.colId;
-            newOrder.push(colId);
+            if (colId) { // Seulement pour les items de champs, pas les refs
+                newOrder.push(colId);
 
-            const labelInput = document.getElementById(`edit-label-${colId}`);
-            if (labelInput && labelInput.value) {
-                newLabels[colId] = labelInput.value;
+                const labelInput = document.getElementById(`edit-label-${colId}`);
+                if (labelInput && labelInput.value) {
+                    newLabels[colId] = labelInput.value;
+                }
+
+                const widthSelect = document.getElementById(`edit-width-${colId}`);
+                if (widthSelect && widthSelect.value) {
+                    newLayouts[colId] = parseInt(widthSelect.value);
+                }
             }
+        });
 
-            const widthSelect = document.getElementById(`edit-width-${colId}`);
-            if (widthSelect && widthSelect.value) {
-                newLayouts[colId] = parseInt(widthSelect.value);
+        // Récupère les configurations de colonnes de référence
+        const refSelects = document.querySelectorAll('[id^="ref-display-"]');
+        refSelects.forEach(select => {
+            const tableName = select.id.replace('ref-display-', '');
+            if (select.value) {
+                newRefDisplayColumns[tableName] = select.value;
             }
         });
 
         console.log('DISP - Nouveaux libellés:', newLabels);
         console.log('DISP - Nouvelles dispositions:', newLayouts);
         console.log('DISP - Nouvel ordre:', newOrder);
+        console.log('DISP - Nouvelles colonnes d\'affichage pour références:', newRefDisplayColumns);
 
         customLabels = newLabels;
         customLayouts = newLayouts;
         customOrder = newOrder;
+        refDisplayColumns = newRefDisplayColumns;
 
         const labelsJson = JSON.stringify(newLabels);
         const layoutsJson = JSON.stringify(newLayouts);
         const orderJson = JSON.stringify(newOrder);
-        console.log('DISP - JSON à sauvegarder:', { labelsJson, layoutsJson, orderJson });
+        const refDisplayJson = JSON.stringify(newRefDisplayColumns);
+        console.log('DISP - JSON à sauvegarder:', { labelsJson, layoutsJson, orderJson, refDisplayJson });
 
         // Essaie plusieurs méthodes de sauvegarde
         let saveSuccess = false;
