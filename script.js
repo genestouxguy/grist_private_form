@@ -590,15 +590,23 @@ async function createInputForType(column) {
                 console.log('DISP - Données chargées:', Object.keys(refData));
             }
 
-            // Trouve la colonne à afficher (cherche 'Nom', 'Name', 'Libelle', ou prend la première colonne non-id)
-            let displayColumn = null;
+            // Colonne à afficher: priorité à la configuration utilisateur
+            let displayColumn = refDisplayColumns[refTableName] || null;
             const columnNames = Object.keys(refData);
             console.log('DISP - Colonnes disponibles dans', refTableName, ':', columnNames);
 
-            for (const possibleName of ['Nom', 'Name', 'Libelle', 'Label', 'Titre', 'Title']) {
-                if (columnNames.includes(possibleName)) {
-                    displayColumn = possibleName;
-                    break;
+            // Vérifie que la colonne configurée existe encore
+            if (displayColumn && !columnNames.includes(displayColumn)) {
+                console.log('DISP - Colonne d\'affichage configurée introuvable:', displayColumn);
+                displayColumn = null;
+            }
+
+            if (!displayColumn) {
+                for (const possibleName of ['Nom', 'Name', 'Libelle', 'Label', 'Titre', 'Title']) {
+                    if (columnNames.includes(possibleName)) {
+                        displayColumn = possibleName;
+                        break;
+                    }
                 }
             }
 
@@ -1194,14 +1202,16 @@ document.getElementById('save-labels-btn').addEventListener('click', async () =>
             await grist.widgetApi.setOptions({
                 customLabels: labelsJson,
                 customLayouts: layoutsJson,
-                customOrder: orderJson
+                customOrder: orderJson,
+                refDisplayColumns: refDisplayJson
             });
 
             // Vérifie immédiatement
             const check1 = await grist.widgetApi.getOptions();
             console.log('DISP - Vérification widgetApi:', check1);
 
-            if (check1 && check1.customLabels === labelsJson && check1.customLayouts === layoutsJson && check1.customOrder === orderJson) {
+            if (check1 && check1.customLabels === labelsJson && check1.customLayouts === layoutsJson &&
+                check1.customOrder === orderJson && check1.refDisplayColumns === refDisplayJson) {
                 console.log('DISP - ✓ Sauvegarde widgetApi réussie');
                 saveSuccess = true;
             }
@@ -1216,14 +1226,16 @@ document.getElementById('save-labels-btn').addEventListener('click', async () =>
                 await grist.setOption('customLabels', labelsJson);
                 await grist.setOption('customLayouts', layoutsJson);
                 await grist.setOption('customOrder', orderJson);
+                await grist.setOption('refDisplayColumns', refDisplayJson);
 
                 // Vérifie
                 const check2 = await grist.getOption('customLabels');
                 const check3 = await grist.getOption('customLayouts');
                 const check4 = await grist.getOption('customOrder');
-                console.log('DISP - Vérification section:', { check2, check3, check4 });
+                const check5 = await grist.getOption('refDisplayColumns');
+                console.log('DISP - Vérification section:', { check2, check3, check4, check5 });
 
-                if (check2 === labelsJson && check3 === layoutsJson && check4 === orderJson) {
+                if (check2 === labelsJson && check3 === layoutsJson && check4 === orderJson && check5 === refDisplayJson) {
                     console.log('DISP - ✓ Sauvegarde section réussie');
                     saveSuccess = true;
                 }
