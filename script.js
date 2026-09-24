@@ -35,7 +35,8 @@ class ColTypesFetcher {
                 type: tableData.type[i],
                 label: tableData.label[i] || colId,
                 parentId: tableData.parentId[i],
-                widgetOptions: tableData.widgetOptions[i] || null
+                widgetOptions: tableData.widgetOptions[i] || null,
+                visibleCol: tableData.visibleCol[i] || null
             };
         }
 
@@ -103,6 +104,57 @@ class ColTypesFetcher {
         }
         return [];
     }
+
+    // Renvoie la colonne d'affichage ('afficher comme') configurée dans Grist
+    // pour une colonne de référence, ou null si absente.
+    getVisibleCol(colId) {
+        if (!this._columnsCache || !this._columnsCache[colId]) {
+            return null;
+        }
+        const ref = this._columnsCache[colId].visibleCol;
+        if (ref == null) {
+            return null;
+        }
+        return this._colIdByRecordId[ref] || null;
+    }
+}
+
+// Colonnes techniques exclues de la sélection d'affichage
+const TECHNICAL_COLUMN_RE = /(^|_)(PK|FK|ID)$|^manualSort|^gristHelper_/i;
+
+// Mots-clés d'affichage, par ordre de priorité
+const DISPLAY_KEYWORD_GROUPS = [
+    ['LIBELLE', 'LABEL'],
+    ['NOM', 'NAME', 'PRENOM'],
+    ['DESCRIPTION', 'DESCR'],
+    ['TITRE', 'TITLE', 'INTITULE'],
+    ['CODE']
+];
+
+// Vrai si la colonne est une candidate raisonnable à l'affichage
+function isDisplayCandidate(colName) {
+    if (!colName) {
+        return false;
+    }
+    return !TECHNICAL_COLUMN_RE.test(colName);
+}
+
+// Résout la meilleure colonne d'affichage pour une table référencée.
+// visibleCol (le 'afficher comme' Grist) prime, sinon heuristiques de noms,
+// sinon la première colonne candidate.
+function resolveDisplayColumn(columnNames, visibleCol) {
+    if (visibleCol && columnNames.includes(visibleCol)) {
+        return visibleCol;
+    }
+
+    const candidates = columnNames.filter(isDisplayCandidate);
+    for (const group of DISPLAY_KEYWORD_GROUPS) {
+        const hit = candidates.find(name => group.some(kw => name.toUpperCase().includes(kw)));
+        if (hit) {
+            return hit;
+        }
+    }
+    return candidates[0] || null;
 }
 
 // Résout le tableId depuis les colonnes mappées. Le moteur Grist n'injecte pas
@@ -618,7 +670,8 @@ async function createInputForType(column) {
                 console.log('DISP - Données chargées:', Object.keys(refData));
             }
 
-            // Colonne à afficher: priorité à la configuration utilisateur
+            // Colonne à afficher: priorité à la configuration utilisateur, puis au
+            // 'afficher comme' Grist (visibleCol), puis aux heuristiques de noms
             let displayColumn = refDisplayColumns[refTableName] || null;
             const columnNames = Object.keys(refData);
             console.log('DISP - Colonnes disponibles dans', refTableName, ':', columnNames);
@@ -630,17 +683,7 @@ async function createInputForType(column) {
             }
 
             if (!displayColumn) {
-                for (const possibleName of ['Nom', 'Name', 'Libelle', 'Label', 'Titre', 'Title']) {
-                    if (columnNames.includes(possibleName)) {
-                        displayColumn = possibleName;
-                        break;
-                    }
-                }
-            }
-
-            // Si aucune colonne standard trouvée, prend la première colonne non-id
-            if (!displayColumn) {
-                displayColumn = columnNames.find(col => col !== 'id' && !col.startsWith('gristHelper_'));
+                displayColumn = resolveDisplayColumn(columnNames, colTypesFetcher.getVisibleCol(column.id));
             }
 
             console.log('DISP - Colonne d\'affichage choisie:', displayColumn);
@@ -948,8 +991,9 @@ document.getElementById('edit-labels-btn').addEventListener('click', () => {
     // Génère la liste des champs à éditer
     labelsList.innerHTML = '';
 
-    // Détecte les colonnes de référence
+    // Détecte les colonnes de référence (une entrée par table référencée)
     const refColumns = [];
+    const seenRefTables = new Set();
 
     columnsList.forEach((col, index) => {
         const item = document.createElement('div');
@@ -958,10 +1002,14 @@ document.getElementById('edit-labels-btn').addEventListener('click', () => {
         item.dataset.colId = col.id;
         item.dataset.index = index;
 
-        // Détecte si c'est une colonne de référence
-        if (col.type && col.type.startsWith('Ref:')) {
-            const refTableName = col.type.substring(4);
-            refColumns.push({ colId: col.id, refTable: refTableName });
+        // Détecte si c'est une colonne de référence (Ref:TableName / RefList:TableName)
+        const baseColType = col.type ? String(col.type).split(':')[0] : '';
+        if (baseColType === 'Ref' || baseColType === 'RefList') {
+            const refTableName = col.type.substring(col.type.indexOf(':') + 1);
+            if (!seenRefTables.has(refTableName)) {
+                seenRefTables.add(refTableName);
+                refColumns.push({ colId: col.id, refTable: refTableName });
+            }
         }
 
         // Handle de drag
@@ -1035,54 +1083,58 @@ document.getElementById('edit-labels-btn').addEventListener('click', () => {
         refConfigList.innerHTML = '';
 
         // Charge les colonnes disponibles pour chaque table référencée
-        for (const refCol of refColumns) {
-            const refItem = document.createElement('div');
-            refItem.className = 'label-edit-item';
-            refItem.style.cursor = 'default';
+            for (const refCol of refColumns) {
+                const refItem = document.createElement('div');
+                refItem.className = 'label-edit-item';
+                refItem.style.cursor = 'default';
 
-            const refLabel = document.createElement('label');
-            refLabel.textContent = `${refCol.colId} (${refCol.refTable})`;
-            refLabel.style.flex = '0 0 200px';
+                const refLabel = document.createElement('label');
+                refLabel.textContent = `${refCol.colId} (${refCol.refTable})`;
+                refLabel.style.flex = '0 0 200px';
 
-            const refSelect = document.createElement('select');
-            refSelect.id = `ref-display-${refCol.refTable}`;
-            refSelect.style.flex = '1';
+                const refSelect = document.createElement('select');
+                refSelect.id = `ref-display-${refCol.refTable}`;
+                refSelect.style.flex = '1';
 
-            // Option par défaut
-            const defaultOption = document.createElement('option');
-            defaultOption.value = '';
-            defaultOption.textContent = 'Automatique';
-            refSelect.appendChild(defaultOption);
+                // Option par défaut
+                const defaultOption = document.createElement('option');
+                defaultOption.value = '';
+                defaultOption.textContent = 'Automatique';
+                refSelect.appendChild(defaultOption);
 
-            // Charge les colonnes de la table référencée
-            (async () => {
-                try {
-                    const refData = await grist.docApi.fetchTable(refCol.refTable);
-                    const availableColumns = Object.keys(refData).filter(col =>
-                        col !== 'id' && !col.startsWith('gristHelper_') && !col.startsWith('manualSort')
-                    );
+                // Charge les colonnes de la table référencée
+                (async () => {
+                    try {
+                        const refData = await grist.docApi.fetchTable(refCol.refTable);
+                        const availableColumns = Object.keys(refData).filter(col =>
+                            isDisplayCandidate(col) && col !== 'id'
+                        );
 
-                    availableColumns.forEach(colName => {
-                        const option = document.createElement('option');
-                        option.value = colName;
-                        option.textContent = colName;
+                        // Colonne recommandée par défaut (afficher comme Grist ou heuristique)
+                        const recommended = resolveDisplayColumn(availableColumns, colTypesFetcher.getVisibleCol(refCol.colId));
+                        const orderedColumns = [recommended, ...availableColumns.filter(c => c !== recommended)];
 
-                        // Sélectionne la colonne configurée
-                        if (refDisplayColumns[refCol.refTable] === colName) {
-                            option.selected = true;
-                        }
+                        orderedColumns.forEach(colName => {
+                            const option = document.createElement('option');
+                            option.value = colName;
+                            option.textContent = colName === recommended ? `${colName} (recommandé)` : colName;
 
-                        refSelect.appendChild(option);
-                    });
-                } catch (error) {
-                    console.error('DISP - Erreur chargement colonnes pour', refCol.refTable, error);
-                }
-            })();
+                            // Sélectionne la colonne configurée
+                            if (refDisplayColumns[refCol.refTable] === colName) {
+                                option.selected = true;
+                            }
 
-            refItem.appendChild(refLabel);
-            refItem.appendChild(refSelect);
-            refConfigList.appendChild(refItem);
-        }
+                            refSelect.appendChild(option);
+                        });
+                    } catch (error) {
+                        console.error('DISP - Erreur chargement colonnes pour', refCol.refTable, error);
+                    }
+                })();
+
+                refItem.appendChild(refLabel);
+                refItem.appendChild(refSelect);
+                refConfigList.appendChild(refItem);
+            }
     }
 
     editor.style.display = 'block';
