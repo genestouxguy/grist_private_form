@@ -34,7 +34,8 @@ class ColTypesFetcher {
             result[colId] = {
                 type: tableData.type[i],
                 label: tableData.label[i] || colId,
-                parentId: tableData.parentId[i]
+                parentId: tableData.parentId[i],
+                widgetOptions: tableData.widgetOptions[i] || null
             };
         }
 
@@ -85,6 +86,22 @@ class ColTypesFetcher {
             }
         }
         return Array.from(tableIds);
+    }
+
+    // Renvoie les choix configurés d'une colonne Choice/ChoiceList
+    getChoices(colId) {
+        if (!this._columnsCache || !this._columnsCache[colId] || !this._columnsCache[colId].widgetOptions) {
+            return [];
+        }
+        try {
+            const parsed = JSON.parse(this._columnsCache[colId].widgetOptions);
+            if (Array.isArray(parsed.choices)) {
+                return parsed.choices.map(String);
+            }
+        } catch (e) {
+            console.log('DISP - widgetOptions non parsable pour', colId, ':', e);
+        }
+        return [];
     }
 }
 
@@ -538,22 +555,27 @@ async function renderForm(columns) {
 // Crée le bon type d'input selon le type de colonne
 async function createInputForType(column) {
     const type = column.type || 'Text';
+    const baseType = String(type).split(':')[0];
     let input;
 
     console.log('DISP - createInputForType pour', column.id, 'type:', type);
 
-    // Gestion des colonnes de référence (Ref:TableName)
-    if (type.startsWith('Ref:')) {
-        const refTableName = type.substring(4); // Extrait le nom de la table après "Ref:"
+    // Gestion des colonnes de référence et listes de références (Ref:TableName / RefList:TableName)
+    if (baseType === 'Ref' || baseType === 'RefList') {
+        const isRefList = baseType === 'RefList';
+        const refTableName = type.substring(type.indexOf(':') + 1);
         console.log('DISP - Colonne de référence détectée, table:', refTableName);
 
         input = document.createElement('select');
-
-        // Option vide par défaut
-        const emptyOption = document.createElement('option');
-        emptyOption.value = '';
-        emptyOption.textContent = '-- Sélectionner --';
-        input.appendChild(emptyOption);
+        if (isRefList) {
+            input.multiple = true;
+        } else {
+            // Option vide par défaut
+            const emptyOption = document.createElement('option');
+            emptyOption.value = '';
+            emptyOption.textContent = '-- Sélectionner --';
+            input.appendChild(emptyOption);
+        }
 
         // Charge les données de la table référencée
         try {
@@ -608,26 +630,52 @@ async function createInputForType(column) {
     }
 
     // Types standards
-    if (type === 'Bool') {
+    if (baseType === 'Bool') {
         input = document.createElement('input');
         input.type = 'checkbox';
-    } else if (type === 'Int' || type === 'Numeric') {
+    } else if (baseType === 'Int' || baseType === 'Numeric') {
         input = document.createElement('input');
         input.type = 'number';
-        if (type === 'Numeric') {
+        if (baseType === 'Numeric') {
             input.step = '0.01';
         }
-    } else if (type === 'Date' || type === 'DateTime') {
+    } else if (baseType === 'Date') {
         input = document.createElement('input');
-        input.type = type === 'Date' ? 'date' : 'datetime-local';
-    } else if (type.startsWith && type.startsWith('Text')) {
+        input.type = 'date';
+    } else if (baseType === 'DateTime') {
+        input = document.createElement('input');
+        input.type = 'datetime-local';
+    } else if (baseType === 'Text') {
         input = document.createElement('textarea');
-    } else if (type.startsWith && type.startsWith('Choice')) {
+    } else if (baseType === 'Choice') {
         input = document.createElement('select');
         const option = document.createElement('option');
         option.value = '';
         option.textContent = '-- Sélectionner --';
         input.appendChild(option);
+
+        // Peuple les options depuis les métadonnées de la colonne
+        const choices = colTypesFetcher.getChoices(column.id);
+        choices.forEach(choice => {
+            const opt = document.createElement('option');
+            opt.value = choice;
+            opt.textContent = choice;
+            input.appendChild(opt);
+        });
+        console.log('DISP - Choix disponibles pour', column.id, ':', choices);
+    } else if (baseType === 'ChoiceList') {
+        input = document.createElement('select');
+        input.multiple = true;
+
+        // Peuple les options depuis les métadonnées de la colonne
+        const choices = colTypesFetcher.getChoices(column.id);
+        choices.forEach(choice => {
+            const opt = document.createElement('option');
+            opt.value = choice;
+            opt.textContent = choice;
+            input.appendChild(opt);
+        });
+        console.log('DISP - Choix multiples disponibles pour', column.id, ':', choices);
     } else {
         input = document.createElement('input');
         input.type = 'text';
@@ -667,6 +715,7 @@ document.getElementById('grist-form').addEventListener('submit', async (e) => {
             console.log('DISP - Traitement champ:', colId, 'type colonne:', colType, 'type input:', input.type, 'value:', input.value);
 
             let value;
+            const baseColType = String(colType || '').split(':')[0];
 
             if (input.type === 'checkbox') {
                 value = Boolean(input.checked);
@@ -679,10 +728,20 @@ document.getElementById('grist-form').addEventListener('submit', async (e) => {
                 } else {
                     value = null;
                 }
-            } else if (input.tagName === 'SELECT' && colType && colType.startsWith('Ref:')) {
+            } else if (input.tagName === 'SELECT' && baseColType === 'Ref') {
                 // Pour les colonnes de référence, envoie l'ID sélectionné (déjà un nombre)
                 value = input.value !== '' ? Number(input.value) : null;
                 console.log('DISP - Colonne de référence, ID sélectionné:', value);
+            } else if (input.tagName === 'SELECT' && baseColType === 'RefList') {
+                // Liste de références: envoie ["L", id1, id2, ...]
+                const selected = Array.from(input.selectedOptions).map(opt => Number(opt.value));
+                value = selected.length > 0 ? ['L', ...selected] : null;
+                console.log('DISP - Liste de références, IDs sélectionnés:', selected);
+            } else if (baseColType === 'ChoiceList') {
+                // Liste de choix: envoie ["L", option1, option2, ...]
+                const selected = Array.from(input.selectedOptions).map(opt => opt.value);
+                value = selected.length > 0 ? ['L', ...selected] : null;
+                console.log('DISP - Liste de choix, sélection:', selected);
             } else {
                 value = String(input.value || '');
             }
