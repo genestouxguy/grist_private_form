@@ -23,16 +23,24 @@ class ColTypesFetcher {
 
         console.log('DISP - Récupération des métadonnées des colonnes');
         const tableData = await grist.docApi.fetchTable('_grist_Tables_column');
+        const tablesData = await grist.docApi.fetchTable('_grist_Tables');
         console.log('DISP - Données brutes reçues:', tableData);
 
         const result = {};
+        this._colIdByRecordId = {};
         for (let i = 0; i < tableData.id.length; i++) {
             const colId = tableData.colId[i];
+            this._colIdByRecordId[tableData.id[i]] = colId;
             result[colId] = {
                 type: tableData.type[i],
                 label: tableData.label[i] || colId,
                 parentId: tableData.parentId[i]
             };
+        }
+
+        this._tablesById = {};
+        for (let i = 0; i < tablesData.id.length; i++) {
+            this._tablesById[tablesData.id[i]] = String(tablesData.tableId[i]);
         }
 
         console.log('DISP - Cache des colonnes construit:', Object.keys(result).length, 'colonnes');
@@ -53,6 +61,107 @@ class ColTypesFetcher {
         }
         return this._columnsCache[colId].label;
     }
+
+    // Traduit un colRef numérique (id d'enregistrement de _grist_Tables_column)
+    // en colId, ou null si inconnu.
+    getColIdForRecordId(recordId) {
+        if (!this._colIdByRecordId) {
+            return null;
+        }
+        return this._colIdByRecordId[recordId] || null;
+    }
+
+    // Renvoie la liste des tableIds qui possèdent une colonne portant ce colId.
+    // Une même colId peut exister dans plusieurs tables.
+    getTableIdsForColId(colId) {
+        if (!this._columnsCache) {
+            return [];
+        }
+        const tableIds = new Set();
+        for (const other in this._columnsCache) {
+            const meta = this._columnsCache[other];
+            if (other === colId && meta.parentId != null && this._tablesById[meta.parentId]) {
+                tableIds.add(this._tablesById[meta.parentId]);
+            }
+        }
+        return Array.from(tableIds);
+    }
+}
+
+// Résout le tableId depuis les colonnes mappées. Le moteur Grist n'injecte pas
+// toujours le tableId dans les mappings, et deviner la première table utilisateur
+// est dangereux (choix d'une mauvaise table). On vote par table : la table qui
+// possède le plus de colonnes mappées gagne. Erreur claire si ambigu.
+async function resolveTableId(mappings) {
+    if (!mappings) {
+        return null;
+    }
+
+    if (mappings.tableId && typeof mappings.tableId === 'string') {
+        console.log('DISP - TableId trouvé dans mappings:', mappings.tableId);
+        return String(mappings.tableId);
+    }
+
+    console.log('DISP - Pas de tableId dans mappings, résolution par les colonnes mappées');
+    await colTypesFetcher.fetchTypes();
+
+    const mappedRefs = [];
+    for (const key in mappings) {
+        if (key === 'tableId' || !mappings[key]) {
+            continue;
+        }
+        const val = mappings[key];
+        if (Array.isArray(val)) {
+            mappedRefs.push(...val);
+        } else {
+            mappedRefs.push(val);
+        }
+    }
+
+    console.log('DISP - Références mappées brutes:', mappedRefs);
+
+    const votes = new Map();
+    for (const ref of mappedRefs) {
+        let colId = null;
+
+        if (typeof ref === 'number') {
+            colId = colTypesFetcher.getColIdForRecordId(ref);
+        } else if (typeof ref === 'string' && !/^\s*$/.test(ref)) {
+            colId = ref;
+        }
+
+        if (!colId) {
+            continue;
+        }
+
+        const tids = colTypesFetcher.getTableIdsForColId(colId);
+        if (tids.length === 1) {
+            votes.set(tids[0], (votes.get(tids[0]) || 0) + 1);
+        }
+    }
+
+    console.log('DISP - Votes par table:', [...votes.entries()]);
+
+    let winner = null;
+    let winnerVotes = 0;
+    let tie = false;
+    for (const [tid, count] of votes.entries()) {
+        if (count > winnerVotes) {
+            winner = tid;
+            winnerVotes = count;
+            tie = false;
+        } else if (count === winnerVotes) {
+            tie = true;
+        }
+    }
+
+    if (!winner || tie) {
+        console.log('DISP - ERREUR: tableId ambigu, votes:', [...votes.entries()]);
+        return null;
+    }
+
+    console.log('DISP - TableId résolu:', winner);
+    return winner;
 }
 
 const colTypesFetcher = new ColTypesFetcher();
@@ -132,30 +241,12 @@ async function loadFromMappings(mappings) {
     console.log('DISP - Mappings reçus:', mappings);
 
     try {
-        // Récupère le tableId
-        if (mappings.tableId) {
-            tableId = String(mappings.tableId);
-            console.log('DISP - TableId trouvé dans mappings:', tableId);
-        } else {
-            console.log('DISP - Pas de tableId dans mappings');
-            // Pour une page de widget, on récupère le nom de la table depuis les données
-            const tables = await grist.docApi.fetchTable('_grist_Tables');
-            console.log('DISP - Tables disponibles:', tables.tableId);
-
-            // Si on n'a qu'une seule table utilisateur, on la prend
-            const userTables = tables.tableId.filter(id => !id.startsWith('_grist_'));
-            console.log('DISP - Tables utilisateur:', userTables);
-
-            if (userTables.length > 0) {
-                // Cherche la table "Clients" ou prend la première
-                tableId = userTables.includes('Clients') ? 'Clients' : userTables[0];
-                console.log('DISP - TableId sélectionné:', tableId);
-            }
-        }
+        // Récupère le tableId par résolution des colonnes mappées
+        tableId = await resolveTableId(mappings);
 
         if (!tableId) {
-            console.log('DISP - ERREUR: Aucun tableId');
-            showMessage('Veuillez configurer la table dans les options du widget', 'error');
+            console.log('DISP - ERREUR: TableId introuvable');
+            showMessage('Impossible de déterminer la table: configurez la table dans les options du widget', 'error');
             return;
         }
 
