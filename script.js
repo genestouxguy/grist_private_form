@@ -676,12 +676,76 @@ async function createInputForType(column) {
             input.appendChild(opt);
         });
         console.log('DISP - Choix multiples disponibles pour', column.id, ':', choices);
+    } else if (baseType === 'Attachments') {
+        input = document.createElement('input');
+        input.type = 'file';
+        input.multiple = true;
     } else {
         input = document.createElement('input');
         input.type = 'text';
     }
 
     return input;
+}
+
+// Téléverse les fichiers sélectionnés d'un champ Attachments via l'API REST.
+// Renvoie ["L", id, ...] ou null si l'upload est impossible (token ou docId
+// insuffisant, réseau, refus serveur).
+async function uploadAttachments(fileInput) {
+    if (!fileInput || !fileInput.files || fileInput.files.length === 0) {
+        return null;
+    }
+
+    let tokenInfo;
+    try {
+        tokenInfo = await grist.docApi.getAccessToken({ readOnly: false });
+    } catch (e) {
+        console.error('DISP - Impossible d\'obtenir le token pour les pièces jointes:', e);
+        return null;
+    }
+
+    const baseUrl = tokenInfo.baseUrl || '';
+    const token = tokenInfo.token || '';
+    if (!baseUrl || !token) {
+        console.error('DISP - Token incomplet pour les pièces jointes:', tokenInfo);
+        return null;
+    }
+
+    let docId;
+    try {
+        docId = String(await grist.docApi.getDocName());
+    } catch (e) {
+        console.error('DISP - Impossible d\'obtenir le docId:', e);
+        return null;
+    }
+
+    const url = `${baseUrl}/api/docs/${encodeURIComponent(docId)}/attachments`;
+    const formData = new FormData();
+    for (const file of fileInput.files) {
+        formData.append('upload', file);
+    }
+
+    try {
+        const resp = await fetch(url, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${token}` },
+            body: formData
+        });
+        if (!resp.ok) {
+            console.error('DISP - Upload pièces jointes refusé:', resp.status, await resp.text().catch(() => ''));
+            return null;
+        }
+        const ids = await resp.json();
+        if (!Array.isArray(ids) || ids.length === 0) {
+            console.error('DISP - Réponse d\'upload invalide:', ids);
+            return null;
+        }
+        console.log('DISP - Pièces jointes téléversées:', ids);
+        return ['L', ...ids];
+    } catch (e) {
+        console.error('DISP - Erreur réseau lors de l\'upload des pièces jointes:', e);
+        return null;
+    }
 }
 
 // Gestion de la soumission du formulaire
@@ -700,6 +764,7 @@ document.getElementById('grist-form').addEventListener('submit', async (e) => {
 
     try {
         const record = {};
+        let attachWarning = false;
 
         // Parcourt tous les champs du formulaire
         for (let i = 0; i < columnsList.length; i++) {
@@ -742,6 +807,17 @@ document.getElementById('grist-form').addEventListener('submit', async (e) => {
                 const selected = Array.from(input.selectedOptions).map(opt => opt.value);
                 value = selected.length > 0 ? ['L', ...selected] : null;
                 console.log('DISP - Liste de choix, sélection:', selected);
+            } else if (baseColType === 'Attachments') {
+                // Téléverse les fichiers puis stocke les ids d'upload
+                const ids = await uploadAttachments(input);
+                if (ids) {
+                    value = ids;
+                    console.log('DISP - Pièces jointes pour', colId, ':', value);
+                } else {
+                    console.log('DISP - Upload impossible pour', colId, 'champ exclu');
+                    attachWarning = true;
+                    continue;
+                }
             } else {
                 value = String(input.value || '');
             }
@@ -770,8 +846,13 @@ document.getElementById('grist-form').addEventListener('submit', async (e) => {
 
         console.log('DISP - Résultat:', result);
         console.log('DISP - Enregistrement ajouté avec succès');
-        showMessage('Enregistrement ajouté avec succès !', 'success');
         document.getElementById('grist-form').reset();
+
+        if (attachWarning) {
+            showMessage('Enregistrement ajouté, mais fichier(s) non joints. Utilisez l\'éditeur natif Grist pour joindre des fichiers.', 'error');
+        } else {
+            showMessage('Enregistrement ajouté avec succès !', 'success');
+        }
 
         setTimeout(() => hideMessage(), 3000);
     } catch (error) {
