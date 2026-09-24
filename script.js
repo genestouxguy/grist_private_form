@@ -327,23 +327,40 @@ async function loadFromMappings(mappings) {
             customLabels = {};
         }
 
-        // Précharge les types de colonnes
+        // Prépare les types de colonnes (nécessaire pour les métadonnées)
         await colTypesFetcher.fetchTypes();
 
-        // Récupère les colonnes mappées
-        const mappedColumns = [];
+        // Récupère les colonnes mappées en normalisant les colRefs numériques vers
+        // des colIds (le moteur peut envoyer des ids d'enregistrement numériques).
+        const rawMapped = [];
         for (const key in mappings) {
             if (key !== 'tableId' && mappings[key]) {
                 if (Array.isArray(mappings[key])) {
-                    mappedColumns.push(...mappings[key]);
+                    rawMapped.push(...mappings[key]);
                 } else {
-                    mappedColumns.push(mappings[key]);
+                    rawMapped.push(mappings[key]);
                 }
                 console.log('DISP - Colonne mappée:', key, '=', mappings[key]);
             }
         }
 
-        console.log('DISP - Total colonnes mappées:', mappedColumns);
+        const mappedColumns = [];
+        for (const ref of rawMapped) {
+            let colId = null;
+            if (typeof ref === 'number') {
+                colId = colTypesFetcher.getColIdForRecordId(ref);
+            } else if (typeof ref === 'string' && !/^\s*$/.test(ref)) {
+                colId = ref;
+            }
+
+            if (colId && !mappedColumns.includes(colId)) {
+                mappedColumns.push(colId);
+            } else if (!colId) {
+                console.log('DISP - Référence mappée non résolue (ignorée):', ref);
+            }
+        }
+
+        console.log('DISP - Total colonnes mappées (colIds):', mappedColumns);
 
         if (mappedColumns.length === 0) {
             console.log('DISP - Aucune colonne mappée, récupération de toutes les colonnes');
