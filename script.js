@@ -240,7 +240,7 @@ async function checkUserAccess() {
     console.log('DISP - Vérification du niveau d\'accès utilisateur');
 
     try {
-        const access = await grist.docApi.getAccessToken();
+        const access = await grist.docApi.getAccessToken({ readOnly: false });
         console.log('DISP - Access token:', access);
 
         // Essaie de récupérer les infos utilisateur via une requête
