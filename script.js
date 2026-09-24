@@ -541,7 +541,35 @@ async function renderForm(columns) {
             input.name = col.id;
 
             formGroup.appendChild(label);
-            formGroup.appendChild(input);
+
+            if (input.type === 'file') {
+                // Liste visible des fichiers sélectionnés pour le champ Attachments
+                const fileList = document.createElement('ul');
+                fileList.className = 'attachments-list';
+                fileList.style.display = 'none';
+
+                input.addEventListener('change', () => {
+                    fileList.innerHTML = '';
+                    const files = Array.from(input.files || []);
+                    if (files.length === 0) {
+                        fileList.style.display = 'none';
+                        return;
+                    }
+                    files.forEach(file => {
+                        const li = document.createElement('li');
+                        const size = file.size > 0 ? `(${formatFileSize(file.size)})` : '';
+                        li.textContent = `${file.name} ${size}`;
+                        fileList.appendChild(li);
+                    });
+                    fileList.style.display = 'block';
+                });
+
+                formGroup.appendChild(input);
+                formGroup.appendChild(fileList);
+            } else {
+                formGroup.appendChild(input);
+            }
+
             formFields.appendChild(formGroup);
         }
 
@@ -696,6 +724,17 @@ async function createInputForType(column) {
     return input;
 }
 
+// Formatte une taille de fichier en octets vers une forme lisible.
+function formatFileSize(bytes) {
+    if (bytes < 1024) {
+        return `${bytes} o`;
+    }
+    if (bytes < 1024 * 1024) {
+        return `${Math.round(bytes / 1024)} Ko`;
+    }
+    return `${(bytes / (1024 * 1024)).toFixed(1)} Mo`;
+}
+
 // Téléverse les fichiers sélectionnés d'un champ Attachments via l'API REST.
 // Renvoie ["L", id, ...] ou null si l'upload est impossible (token ou docId
 // insuffisant, réseau, refus serveur).
@@ -719,15 +758,9 @@ async function uploadAttachments(fileInput) {
         return null;
     }
 
-    let docId;
-    try {
-        docId = String(await grist.docApi.getDocName());
-    } catch (e) {
-        console.error('DISP - Impossible d\'obtenir le docId:', e);
-        return null;
-    }
-
-    const url = `${baseUrl}/api/docs/${encodeURIComponent(docId)}/attachments`;
+    // Le baseUrl fourni par Grist contient déjà la racine d'API du document
+    // (ex: https://host/api/docs/<urlId>), sur laquelle on ajoute /attachments.
+    const url = `${baseUrl}/attachments`;
     const formData = new FormData();
     for (const file of fileInput.files) {
         formData.append('upload', file);
@@ -740,7 +773,7 @@ async function uploadAttachments(fileInput) {
             body: formData
         });
         if (!resp.ok) {
-            console.error('DISP - Upload pièces jointes refusé:', resp.status, await resp.text().catch(() => ''));
+            console.error('DISP - Upload pièces jointes refusé:', resp.status, 'url:', url, await resp.text().catch(() => ''));
             return null;
         }
         const ids = await resp.json();
