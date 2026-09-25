@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2025-2026 Guy Genestoux <guy.genestoux@insa-lyon.fr>
+//
+// SPDX-License-Identifier: CECILL-2.1
+
 let tableId = null;
 let columnsList = [];
 let referenceTables = {}; // Cache pour les données des tables référencées
