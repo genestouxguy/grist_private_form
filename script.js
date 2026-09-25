@@ -6,6 +6,7 @@ let customLabels = {}; // Labels personnalisés
 let customLayouts = {}; // Disposition personnalisée (largeur de chaque champ)
 let customOrder = []; // Ordre personnalisé des champs
 let refDisplayColumns = {}; // Colonnes d'affichage pour les références (ex: {Clients: 'Nom'})
+let customFieldStyles = {}; // Styles d'affichage par colonne de référence (ex: {FK_VOYAGEURS: 'checkbox'})
 let userAccess = null; // Niveau d'accès de l'utilisateur
 
 console.log('DISP - Démarrage du script');
@@ -155,6 +156,21 @@ function resolveDisplayColumn(columnNames, visibleCol) {
         }
     }
     return candidates[0] || null;
+}
+
+// Colonne d'affichage d'une table référencée: configuration utilisateur si elle
+// existe encore, sinon visibleCol Grist + heuristiques.
+function resolveRefDisplayColumn(refTableName, refData, column) {
+    const columnNames = Object.keys(refData);
+    let displayColumn = refDisplayColumns[refTableName] || null;
+    if (displayColumn && !columnNames.includes(displayColumn)) {
+        console.log('DISP - Colonne d\'affichage configurée introuvable:', displayColumn);
+        displayColumn = null;
+    }
+    if (!displayColumn) {
+        displayColumn = resolveDisplayColumn(columnNames, colTypesFetcher.getVisibleCol(column.id));
+    }
+    return displayColumn;
 }
 
 // Résout le tableId depuis les colonnes mappées. Le moteur Grist n'injecte pas
@@ -349,6 +365,11 @@ async function loadFromMappings(mappings) {
                     refDisplayColumns = JSON.parse(widgetOptions.refDisplayColumns);
                     console.log('DISP - RefDisplayColumns depuis widgetApi:', refDisplayColumns);
                 }
+
+                if (widgetOptions && widgetOptions.customFieldStyles) {
+                    customFieldStyles = JSON.parse(widgetOptions.customFieldStyles);
+                    console.log('DISP - FieldStyles depuis widgetApi:', customFieldStyles);
+                }
             } catch (e1) {
                 console.log('DISP - widgetApi.getOptions échoué:', e1);
             }
@@ -380,6 +401,12 @@ async function loadFromMappings(mappings) {
                     if (refDisplayOptions) {
                         refDisplayColumns = JSON.parse(refDisplayOptions);
                         console.log('DISP - RefDisplayColumns depuis section:', refDisplayColumns);
+                    }
+
+                    const fieldStyleOptions = await grist.getOption('customFieldStyles');
+                    if (fieldStyleOptions) {
+                        customFieldStyles = JSON.parse(fieldStyleOptions);
+                        console.log('DISP - FieldStyles depuis section:', customFieldStyles);
                     }
                 } catch (e2) {
                     console.log('DISP - getOption échoué:', e2);
@@ -646,6 +673,71 @@ async function createInputForType(column) {
         const refTableName = type.substring(type.indexOf(':') + 1);
         console.log('DISP - Colonne de référence détectée, table:', refTableName);
 
+        const fieldStyle = customFieldStyles[column.id] || (isRefList ? 'multiselect' : 'select');
+        const radioStyle = !isRefList && (fieldStyle === 'radio' || fieldStyle === 'radio-none');
+        const checkboxStyle = isRefList && fieldStyle === 'checkbox';
+        console.log('DISP - Style d\'affichage pour', column.id, ':', fieldStyle);
+
+        // Styles "boutons radio" (Ref) et "cases à cocher" (RefList): rendu en fieldset
+        if (radioStyle || checkboxStyle) {
+            input = document.createElement('fieldset');
+            input.className = radioStyle ? 'radio-group' : 'checkbox-group';
+
+            try {
+                let refData;
+                if (referenceTables[refTableName]) {
+                    console.log('DISP - Utilisation du cache pour', refTableName);
+                    refData = referenceTables[refTableName];
+                } else {
+                    console.log('DISP - Chargement des données de', refTableName);
+                    refData = await grist.docApi.fetchTable(refTableName);
+                    referenceTables[refTableName] = refData;
+                    console.log('DISP - Données chargées:', Object.keys(refData));
+                }
+
+                const displayColumn = resolveRefDisplayColumn(refTableName, refData, column);
+                console.log('DISP - Colonne d\'affichage choisie:', displayColumn);
+
+                const groupName = column.id;
+
+                // Radio "Aucun" uniquement si demandé, sélectionné par défaut
+                if (radioStyle && fieldStyle === 'radio-none') {
+                    const noneLabel = document.createElement('label');
+                    noneLabel.className = 'choice-item';
+                    const noneInput = document.createElement('input');
+                    noneInput.type = 'radio';
+                    noneInput.name = groupName;
+                    noneInput.value = '';
+                    noneInput.checked = true;
+                    noneLabel.appendChild(noneInput);
+                    noneLabel.appendChild(document.createTextNode('Aucun'));
+                    input.appendChild(noneLabel);
+                }
+
+                if (displayColumn && refData.id && refData[displayColumn]) {
+                    for (let i = 0; i < refData.id.length; i++) {
+                        const choiceLabel = document.createElement('label');
+                        choiceLabel.className = 'choice-item';
+                        const choiceInput = document.createElement('input');
+                        choiceInput.type = radioStyle ? 'radio' : 'checkbox';
+                        choiceInput.name = groupName;
+                        choiceInput.value = refData.id[i];
+                        choiceLabel.appendChild(choiceInput);
+                        choiceLabel.appendChild(document.createTextNode(refData[displayColumn][i] || `ID: ${refData.id[i]}`));
+                        input.appendChild(choiceLabel);
+                    }
+                    console.log('DISP - Nombre d\'options créées:', refData.id.length);
+                } else {
+                    console.log('DISP - ATTENTION: Impossible de créer les options');
+                }
+            } catch (error) {
+                console.error('DISP - Erreur lors du chargement de la table de référence:', error);
+            }
+
+            return input;
+        }
+
+        // Style par défaut: select (simple ou multiple)
         input = document.createElement('select');
         if (isRefList) {
             input.multiple = true;
@@ -670,22 +762,7 @@ async function createInputForType(column) {
                 console.log('DISP - Données chargées:', Object.keys(refData));
             }
 
-            // Colonne à afficher: priorité à la configuration utilisateur, puis au
-            // 'afficher comme' Grist (visibleCol), puis aux heuristiques de noms
-            let displayColumn = refDisplayColumns[refTableName] || null;
-            const columnNames = Object.keys(refData);
-            console.log('DISP - Colonnes disponibles dans', refTableName, ':', columnNames);
-
-            // Vérifie que la colonne configurée existe encore
-            if (displayColumn && !columnNames.includes(displayColumn)) {
-                console.log('DISP - Colonne d\'affichage configurée introuvable:', displayColumn);
-                displayColumn = null;
-            }
-
-            if (!displayColumn) {
-                displayColumn = resolveDisplayColumn(columnNames, colTypesFetcher.getVisibleCol(column.id));
-            }
-
+            const displayColumn = resolveRefDisplayColumn(refTableName, refData, column);
             console.log('DISP - Colonne d\'affichage choisie:', displayColumn);
 
             if (displayColumn && refData.id && refData[displayColumn]) {
@@ -868,6 +945,16 @@ document.getElementById('grist-form').addEventListener('submit', async (e) => {
 
             if (input.type === 'checkbox') {
                 value = Boolean(input.checked);
+            } else if (input.tagName === 'FIELDSET' && baseColType === 'Ref') {
+                // Boutons radio: rowId du radio coché, ou null si "Aucun"
+                const checked = input.querySelector('input:checked');
+                value = checked ? (checked.value !== '' ? Number(checked.value) : null) : null;
+                console.log('DISP - Colonne de référence (radio), ID sélectionné:', value);
+            } else if (input.tagName === 'FIELDSET' && baseColType === 'RefList') {
+                // Cases à cocher: ["L", id1, id2, ...]
+                const selected = Array.from(input.querySelectorAll('input:checked')).map(opt => Number(opt.value));
+                value = selected.length > 0 ? ['L', ...selected] : null;
+                console.log('DISP - Liste de références (cases à cocher), IDs sélectionnés:', selected);
             } else if (input.type === 'number') {
                 value = input.value !== '' ? Number(input.value) : null;
             } else if (input.type === 'date' || input.type === 'datetime-local') {
@@ -1061,6 +1148,41 @@ document.getElementById('edit-labels-btn').addEventListener('click', () => {
         controls.appendChild(widthLabel);
         controls.appendChild(widthSelect);
 
+        // Select pour le style d'affichage (uniquement Ref / RefList)
+        const styleBaseType = col.type ? String(col.type).split(':')[0] : '';
+        if (styleBaseType === 'Ref' || styleBaseType === 'RefList') {
+            const styleLabel = document.createElement('label');
+            styleLabel.textContent = 'Affichage:';
+
+            const styleSelect = document.createElement('select');
+            styleSelect.id = `edit-style-${col.id}`;
+
+            const isRefList = styleBaseType === 'RefList';
+            const styleOptions = isRefList
+                ? [
+                    { value: 'multiselect', label: 'Liste multi-sélection' },
+                    { value: 'checkbox', label: 'Cases à cocher' }
+                ]
+                : [
+                    { value: 'select', label: 'Liste déroulante' },
+                    { value: 'radio', label: 'Boutons radio' },
+                    { value: 'radio-none', label: 'Boutons radio + « Aucun »' }
+                ];
+
+            styleOptions.forEach(opt => {
+                const option = document.createElement('option');
+                option.value = opt.value;
+                option.textContent = opt.label;
+                if ((customFieldStyles[col.id] || '') === opt.value) {
+                    option.selected = true;
+                }
+                styleSelect.appendChild(option);
+            });
+
+            controls.appendChild(styleLabel);
+            controls.appendChild(styleSelect);
+        }
+
         item.appendChild(dragHandle);
         item.appendChild(label);
         item.appendChild(controls);
@@ -1232,6 +1354,7 @@ document.getElementById('save-labels-btn').addEventListener('click', async () =>
         const newLayouts = {};
         const newOrder = [];
         const newRefDisplayColumns = {};
+        const newFieldStyles = {};
 
         // Récupère l'ordre actuel depuis le DOM
         const allItems = Array.from(document.querySelectorAll('.label-edit-item'));
@@ -1250,6 +1373,11 @@ document.getElementById('save-labels-btn').addEventListener('click', async () =>
                 if (widthSelect && widthSelect.value) {
                     newLayouts[colId] = parseInt(widthSelect.value);
                 }
+
+                const styleSelect = document.getElementById(`edit-style-${colId}`);
+                if (styleSelect && styleSelect.value) {
+                    newFieldStyles[colId] = styleSelect.value;
+                }
             }
         });
 
@@ -1266,17 +1394,20 @@ document.getElementById('save-labels-btn').addEventListener('click', async () =>
         console.log('DISP - Nouvelles dispositions:', newLayouts);
         console.log('DISP - Nouvel ordre:', newOrder);
         console.log('DISP - Nouvelles colonnes d\'affichage pour références:', newRefDisplayColumns);
+        console.log('DISP - Nouveaux styles d\'affichage:', newFieldStyles);
 
         customLabels = newLabels;
         customLayouts = newLayouts;
         customOrder = newOrder;
         refDisplayColumns = newRefDisplayColumns;
+        customFieldStyles = newFieldStyles;
 
         const labelsJson = JSON.stringify(newLabels);
         const layoutsJson = JSON.stringify(newLayouts);
         const orderJson = JSON.stringify(newOrder);
         const refDisplayJson = JSON.stringify(newRefDisplayColumns);
-        console.log('DISP - JSON à sauvegarder:', { labelsJson, layoutsJson, orderJson, refDisplayJson });
+        const fieldStylesJson = JSON.stringify(newFieldStyles);
+        console.log('DISP - JSON à sauvegarder:', { labelsJson, layoutsJson, orderJson, refDisplayJson, fieldStylesJson });
 
         // Essaie plusieurs méthodes de sauvegarde
         let saveSuccess = false;
@@ -1288,7 +1419,8 @@ document.getElementById('save-labels-btn').addEventListener('click', async () =>
                 customLabels: labelsJson,
                 customLayouts: layoutsJson,
                 customOrder: orderJson,
-                refDisplayColumns: refDisplayJson
+                refDisplayColumns: refDisplayJson,
+                customFieldStyles: fieldStylesJson
             });
 
             // Vérifie immédiatement
@@ -1296,7 +1428,8 @@ document.getElementById('save-labels-btn').addEventListener('click', async () =>
             console.log('DISP - Vérification widgetApi:', check1);
 
             if (check1 && check1.customLabels === labelsJson && check1.customLayouts === layoutsJson &&
-                check1.customOrder === orderJson && check1.refDisplayColumns === refDisplayJson) {
+                check1.customOrder === orderJson && check1.refDisplayColumns === refDisplayJson &&
+                check1.customFieldStyles === fieldStylesJson) {
                 console.log('DISP - ✓ Sauvegarde widgetApi réussie');
                 saveSuccess = true;
             }
@@ -1312,15 +1445,18 @@ document.getElementById('save-labels-btn').addEventListener('click', async () =>
                 await grist.setOption('customLayouts', layoutsJson);
                 await grist.setOption('customOrder', orderJson);
                 await grist.setOption('refDisplayColumns', refDisplayJson);
+                await grist.setOption('customFieldStyles', fieldStylesJson);
 
                 // Vérifie
                 const check2 = await grist.getOption('customLabels');
                 const check3 = await grist.getOption('customLayouts');
                 const check4 = await grist.getOption('customOrder');
                 const check5 = await grist.getOption('refDisplayColumns');
-                console.log('DISP - Vérification section:', { check2, check3, check4, check5 });
+                const check6 = await grist.getOption('customFieldStyles');
+                console.log('DISP - Vérification section:', { check2, check3, check4, check5, check6 });
 
-                if (check2 === labelsJson && check3 === layoutsJson && check4 === orderJson && check5 === refDisplayJson) {
+                if (check2 === labelsJson && check3 === layoutsJson && check4 === orderJson && check5 === refDisplayJson &&
+                    check6 === fieldStylesJson) {
                     console.log('DISP - ✓ Sauvegarde section réussie');
                     saveSuccess = true;
                 }

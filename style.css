@@ -155,6 +155,46 @@ h1 {
     cursor: pointer;
 }
 
+/* Groupes boutons radio / cases à cocher (colonnes de référence) */
+.radio-group,
+.checkbox-group {
+    border: none;
+    margin: 0;
+    padding: 0;
+    width: 100%;
+}
+
+.radio-group .choice-item,
+.checkbox-group .choice-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    margin-bottom: 4px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    background: #fff;
+    cursor: pointer;
+    transition: border-color 0.2s, background 0.2s;
+}
+
+.radio-group .choice-item:hover,
+.checkbox-group .choice-item:hover {
+    border-color: #16B378;
+    background: #f0faf6;
+}
+
+.radio-group input[type="radio"],
+.checkbox-group input[type="checkbox"] {
+    border: none;
+    padding: 0;
+    width: 18px;
+    height: 18px;
+    margin: 0;
+    flex: 0 0 auto;
+    accent-color: #16B378;
+}
+
 .form-group input[type="file"] {
     padding: 8px;
     border: 1px dashed #16B378;
