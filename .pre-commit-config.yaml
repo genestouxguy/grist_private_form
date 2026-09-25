@@ -1,0 +1,26 @@
+# SPDX-FileCopyrightText: 2025-2026 Guy Genestoux <guy.genestoux@insa-lyon.fr>
+#
+# SPDX-License-Identifier: CECILL-2.1
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-added-large-files
+        args: ['--maxkb=500']
+
+  - repo: https://codeberg.org/fsfe/reuse-tool
+    rev: v6.2.0
+    hooks:
+      - id: reuse-lint-file
+
+  - repo: local
+    hooks:
+      - id: add-emoji
+        name: Ajoute un emoji Gitmoji selon le type Conventional Commit
+        entry: python tools/add_emoji.py
+        language: system
+        stages: [commit-msg]

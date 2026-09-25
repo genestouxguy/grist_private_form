@@ -24,6 +24,30 @@ vanilla. Un simple `node` suffit pour vérifier la syntaxe :
 node --check script.js
 ```
 
+### Garde-fous pre-commit
+
+Le projet utilise **[pre-commit](https://pre-commit.com/)** pour l'hygiène du
+dépôt, la conformité REUSE et l'ajout automatique des emojis Gitmoji. Installez
+les hooks une seule fois par clone :
+
+```bash
+# Installation de l'outil (Python)
+uv tool install pre-commit
+# — ou — pipx install pre-commit
+
+# Activation des hooks (commit + commit-msg pour les emojis)
+pre-commit install
+pre-commit install --hook-type commit-msg
+```
+
+Le hook `commit-msg` ajoute automatiquement l'emoji Gitmoji correspondant au
+type Conventional Commit (hors-ligne si besoin). Lancez une vérification
+complète avec :
+
+```bash
+pre-commit run --all-files
+```
+
 ## 📜 Processus de contribution
 
 1. **Ouvrez une Issue** pour discuter du changement proposé avant de coder.
